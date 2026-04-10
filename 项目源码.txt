@@ -1,0 +1,4165 @@
+#ifndef LOGINWINDOW_H
+#define LOGINWINDOW_H
+
+#include <QWidget>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QLabel>
+#include <QCheckBox>
+#include <QPixmap>
+
+class LoginWindow : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit LoginWindow(QWidget *parent = nullptr);
+
+signals:
+    void showRegisterWindow();
+    void showProfileWindow(const QString &account);
+    void showGameMainWindow(const QString &account); // 新增，跳转游戏主页
+
+private slots:
+    void onLoginClicked();
+    void onRegisterClicked();
+    void togglePasswordVisibility(bool checked);
+    void updateMusicIcon(bool muted);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void showToast(const QString &message);
+
+private:
+    void setupUI();
+    void setBackground();
+    void playSound(const QString &effect);
+
+
+    QPushButton *musicBtn;
+    QLabel *toastLabel;  // 用于显示浮动提示
+    QLineEdit *usernameEdit;
+    QLineEdit *passwordEdit;
+    QPushButton *loginBtn;
+    QPushButton *registerBtn;
+    QCheckBox *showPasswordCheck;
+    QPixmap bgPixmap;
+};
+
+#endif // LOGINWINDOW_H
+#include "loginwindow.h"
+#include "dbmanager.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
+#include <QTimer>
+#include <QPainter>
+#include <QDebug>
+#include <QSoundEffect>
+#include "musicmanager.h"
+
+LoginWindow::LoginWindow(QWidget *parent) : QWidget(parent), toastLabel(nullptr)
+{
+    setupUI();
+    setBackground();
+}
+
+void LoginWindow::setupUI()
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("登录 - 侦探事务所");
+    resize(500, 800);
+    setMinimumSize(450, 350);
+
+    // 创建音乐控制按钮
+    musicBtn = new QPushButton(this);
+    musicBtn->setFixedSize(36, 36);  // 稍微大一点，方便点击
+    musicBtn->setCursor(Qt::PointingHandCursor);
+
+    // 关键：移除按钮的所有边框和背景，让它变成纯图标
+    musicBtn->setFlat(true);  // 扁平样式
+    musicBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            border-radius: 18px;  /* 圆形裁剪 */
+            padding: 0px;
+        }
+        QPushButton:hover {
+            background-color: rgba(155, 123, 98, 0.3);  /* 悬停时淡淡的背景 */
+        }
+        QPushButton:pressed {
+            background-color: rgba(92, 63, 46, 0.5);
+        }
+    )");
+
+    connect(musicBtn, &QPushButton::clicked, this, [](){
+        MusicManager::instance().toggleMute();
+    });
+
+    // 创建标题标签
+    QLabel *titleLabel = new QLabel("侦探事务所", this);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet(
+        "color: white;"
+        "font: bold 50px '华文楷体', 'Microsoft YaHei', 'SimHei', serif;"
+        );
+
+    usernameEdit = new QLineEdit(this);
+    usernameEdit->setPlaceholderText("账号 (11位)");
+    usernameEdit->setMaxLength(11);
+
+    passwordEdit = new QLineEdit(this);
+    passwordEdit->setPlaceholderText("密码");
+    passwordEdit->setEchoMode(QLineEdit::Password);
+    passwordEdit->setMaxLength(20);
+
+    showPasswordCheck = new QCheckBox("显示密码", this);
+    connect(showPasswordCheck, &QCheckBox::toggled, this, &LoginWindow::togglePasswordVisibility);
+
+    loginBtn = new QPushButton("登录", this);
+    registerBtn = new QPushButton("注册", this);
+
+    connect(loginBtn, &QPushButton::clicked, this, &LoginWindow::onLoginClicked);
+    connect(registerBtn, &QPushButton::clicked, this, &LoginWindow::onRegisterClicked);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(50, 20, 50, 20);
+    mainLayout->setSpacing(20);
+
+    // 顶部栏：音乐按钮在右上角
+    QHBoxLayout *topBarLayout = new QHBoxLayout();
+    topBarLayout->addStretch();       // 先添加弹性空间，将按钮推到右边
+    topBarLayout->addWidget(musicBtn);
+    mainLayout->addLayout(topBarLayout);
+
+    // 标题标签，居中显示
+    mainLayout->addWidget(titleLabel, 0, Qt::AlignHCenter);
+    // 添加一些间距使标题与下方控件拉开距离
+    mainLayout->addSpacing(30);
+
+    mainLayout->addStretch(1); // 弹性空间，将控件推下
+
+    mainLayout->addWidget(usernameEdit);
+    mainLayout->addWidget(passwordEdit);
+    mainLayout->addWidget(showPasswordCheck);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->setSpacing(20);
+    btnLayout->addWidget(loginBtn);
+    btnLayout->addWidget(registerBtn);
+    mainLayout->addLayout(btnLayout);
+
+    mainLayout->addStretch(1); // 底部弹性空间
+
+    setLayout(mainLayout);
+
+    // 初始化音乐按钮图标并连接状态信号
+    updateMusicIcon(MusicManager::instance().isMuted());
+    connect(&MusicManager::instance(), &MusicManager::muteStateChanged,
+            this, &LoginWindow::updateMusicIcon);
+
+    // 样式表（与之前一致）
+    setStyleSheet(R"(
+        QWidget {
+            color: #e0d6c0;
+            font-size: 14px;
+        }
+        QLineEdit {
+            background-color: #5c3f2e;
+            border: 2px solid #7a5a44;
+            border-radius: 10px;
+            padding: 8px;
+            color: #f0e6d2;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 10px 20px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+        QCheckBox {
+            color: #e0d6c0;
+        }
+        QCheckBox::indicator {
+            width: 20px;
+            height: 20px;
+        }
+        QCheckBox::indicator:unchecked {
+            background-color: #5c3f2e;
+            border: 2px solid #7a5a44;
+            border-radius: 4px;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #9b7b62;
+            border: 2px solid #7a5a44;
+            border-radius: 4px;
+        }
+    )");
+}
+
+void LoginWindow::updateMusicIcon(bool muted)
+{
+    QString iconPath = muted ? ":/res/musicBimg2.jpg" : ":/res/musicBimg1.jpg";
+
+    QPixmap pixmap(iconPath);
+    if (pixmap.isNull()) {
+        // 如果图片加载失败，使用备用方案（绘制简单图标）
+        return;
+    }
+
+    // 将图片裁剪成圆形，更好地融入UI
+    QPixmap rounded(pixmap.size());
+    rounded.fill(Qt::transparent);
+
+    QPainter painter(&rounded);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(QBrush(pixmap.scaled(pixmap.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(rounded.rect());
+    painter.end();
+
+    musicBtn->setIcon(QIcon(rounded));
+    musicBtn->setIconSize(QSize(28, 28));  // 图标比按钮略小，留出边距
+}
+
+void LoginWindow::setBackground()
+{
+    if (!bgPixmap.load(":/res/2.jpg")) {
+        qDebug() << "背景图片加载失败，使用纯色背景";
+        setAutoFillBackground(true);
+        QPalette pal;
+        pal.setColor(backgroundRole(), QColor(62, 43, 31));
+        setPalette(pal);
+    } else {
+        qDebug() << "背景图片加载成功";
+    }
+}
+
+void LoginWindow::paintEvent(QPaintEvent *event)
+{
+    if (!bgPixmap.isNull()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(rect(), bgPixmap.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        painter.fillRect(rect(), QColor(0, 0, 0, 80));
+    } else {
+        QWidget::paintEvent(event);
+    }
+}
+
+void LoginWindow::togglePasswordVisibility(bool checked)
+{
+    passwordEdit->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
+}
+
+void LoginWindow::showToast(const QString &message)
+{
+    if (!toastLabel) {
+        toastLabel = new QLabel(nullptr);  // 独立窗口，无父对象
+        toastLabel->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+        // 重要：不要设置 WA_TranslucentBackground，否则背景和边框无法正常绘制
+        toastLabel->setAlignment(Qt::AlignCenter);
+        toastLabel->setStyleSheet(
+            "QLabel {"
+            "   background-color: rgb(62, 43, 31);"
+            "   color: white;"
+            "   border: 2px solid #9b7b62;"
+            "   border-radius: 10px;"
+            "   padding: 10px 20px;"
+            "   font: bold 16px 'Microsoft YaHei', 'Arial', sans-serif;"
+            "}"
+            );
+        toastLabel->hide();
+    }
+
+    toastLabel->setText(message);
+    toastLabel->adjustSize();
+
+    // 计算全局坐标：以父窗口为基准，水平居中，初始位于父窗口上方
+    QPoint parentTopLeft = mapToGlobal(QPoint(0, 0));
+    int winWidth = width();
+    int toastW = toastLabel->width();
+    int toastH = toastLabel->height();
+
+    int globalStartX = parentTopLeft.x() + (winWidth - toastW) / 2;
+    int globalStartY = parentTopLeft.y() - toastH;          // 父窗口上方
+    int globalEndY = parentTopLeft.y() + 20;                 // 父窗口内距离顶部20像素
+
+    toastLabel->move(globalStartX, globalStartY);
+    toastLabel->show();
+    toastLabel->raise();
+
+    // 下降动画
+    QPropertyAnimation *dropAnim = new QPropertyAnimation(toastLabel, "pos");
+    dropAnim->setDuration(500);
+    dropAnim->setStartValue(QPoint(globalStartX, globalStartY));
+    dropAnim->setEndValue(QPoint(globalStartX, globalEndY));
+    dropAnim->setEasingCurve(QEasingCurve::OutQuad);
+    dropAnim->start(QPropertyAnimation::DeleteWhenStopped);
+
+    // 停留1秒后上升消失
+    QTimer::singleShot(1000, [this, globalStartX, globalEndY, toastH]() {
+        if (toastLabel && toastLabel->isVisible()) {
+            QPropertyAnimation *riseAnim = new QPropertyAnimation(toastLabel, "pos");
+            riseAnim->setDuration(300);
+            riseAnim->setStartValue(QPoint(globalStartX, globalEndY));
+            riseAnim->setEndValue(QPoint(globalStartX, globalEndY - toastH - 20)); // 上升至父窗口上方
+            riseAnim->setEasingCurve(QEasingCurve::InQuad);
+            connect(riseAnim, &QPropertyAnimation::finished, toastLabel, &QLabel::hide);
+            riseAnim->start(QPropertyAnimation::DeleteWhenStopped);
+        }
+    });
+}
+
+void LoginWindow::onLoginClicked()
+{
+    playSound("click");
+
+    QString account = usernameEdit->text().trimmed();
+    QString password = passwordEdit->text();
+
+    if (account.isEmpty() || password.isEmpty()) {
+        showToast("账号和密码不能为空");
+        return;
+    }
+
+    if (!DBManager::userExists(account)) {
+        showToast("账号不存在");
+        return;
+    }
+
+    if (!DBManager::validateUser(account, password)) {
+        showToast("密码错误");
+        return;
+    }
+
+    // 登录成功，判断信息是否完善
+    if (DBManager::hasUserProfile(account)) {
+        // 已完善，直接跳转游戏主页
+        showToast("登录成功！");
+        QGraphicsOpacityEffect *opacityEffect = new QGraphicsOpacityEffect(this);
+        this->setGraphicsEffect(opacityEffect);
+        QPropertyAnimation *fadeOut = new QPropertyAnimation(opacityEffect, "opacity");
+        fadeOut->setDuration(500);
+        fadeOut->setStartValue(1.0);
+        fadeOut->setEndValue(0.0);
+        fadeOut->start(QPropertyAnimation::DeleteWhenStopped);
+
+        QTimer::singleShot(1500, [this, account]() {
+            emit showGameMainWindow(account);
+            this->close();
+        });
+    } else {
+        // 未完善，跳转完善信息
+        showToast("请完善信息");
+        QGraphicsOpacityEffect *opacityEffect = new QGraphicsOpacityEffect(this);
+        this->setGraphicsEffect(opacityEffect);
+        QPropertyAnimation *fadeOut = new QPropertyAnimation(opacityEffect, "opacity");
+        fadeOut->setDuration(500);
+        fadeOut->setStartValue(1.0);
+        fadeOut->setEndValue(0.0);
+        fadeOut->start(QPropertyAnimation::DeleteWhenStopped);
+
+        QTimer::singleShot(1500, [this, account]() {
+            emit showProfileWindow(account);
+            this->close();
+        });
+    }
+}
+
+void LoginWindow::onRegisterClicked()
+{
+    playSound("click");
+    emit showRegisterWindow();
+    this->hide();
+}
+
+void LoginWindow::playSound(const QString &effect)
+{
+    // 只处理点击音效
+    if (effect != "click")
+        return;
+
+    static QSoundEffect clickSound;
+    static bool initialized = false;
+
+    if (!initialized) {
+        clickSound.setSource(QUrl("qrc:/res/btnSound.wav"));
+        clickSound.setVolume(1.0f);
+        initialized = true;
+    }
+
+    clickSound.play();
+}
+#ifndef MUSICMANAGER_H
+#define MUSICMANAGER_H
+
+#include <QObject>
+#include <QMediaPlayer>
+#include <QAudioOutput>
+
+class MusicManager : public QObject
+{
+    Q_OBJECT
+public:
+    static MusicManager& instance();
+
+    bool isMuted() const { return m_muted; }
+    void setMuted(bool muted);   // true = 静音，false = 播放
+    void toggleMute();            // 切换静音状态
+
+signals:
+    void muteStateChanged(bool muted);  // 状态变化信号，用于更新按钮图标
+
+private:
+    explicit MusicManager(QObject *parent = nullptr);
+    ~MusicManager();
+
+    QMediaPlayer *m_player;
+    QAudioOutput *m_audioOutput;
+    bool m_muted;
+};
+
+#endif // MUSICMANAGER_H
+#include "musicmanager.h"
+#include <QUrl>
+
+MusicManager::MusicManager(QObject *parent)
+    : QObject(parent), m_muted(false)
+{
+    m_player = new QMediaPlayer(this);
+    m_audioOutput = new QAudioOutput(this);
+    m_player->setAudioOutput(m_audioOutput);
+    m_player->setSource(QUrl("qrc:/res/gameMB1.mp3")); // 背景音乐文件路径（请替换为您的文件）
+    m_player->setLoops(QMediaPlayer::Infinite);    // 无限循环
+    m_audioOutput->setVolume(0.5f);                 // 音量 0.0~1.0
+    m_player->play();                               // 默认开始播放
+}
+
+MusicManager::~MusicManager()
+{
+    m_player->stop();
+}
+
+MusicManager& MusicManager::instance()
+{
+    static MusicManager instance;
+    return instance;
+}
+
+void MusicManager::setMuted(bool muted)
+{
+    if (m_muted == muted) return;
+    m_muted = muted;
+    m_audioOutput->setMuted(m_muted);
+    emit muteStateChanged(m_muted);
+}
+
+void MusicManager::toggleMute()
+{
+    setMuted(!m_muted);
+}
+#ifndef PROFILEWINDOW_H
+#define PROFILEWINDOW_H
+
+#include <QWidget>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QLabel>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QPixmap>
+
+class ProfileWindow : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ProfileWindow(const QString &account, QWidget *parent = nullptr);
+
+signals:
+    void complete();
+    void goToGameMain(const QString &account);  // 直接跳转游戏主页
+
+private slots:
+    void onSelectAvatar();
+    void onCompleteClicked();
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+
+private:
+    void setupUI();
+    void setBackground();
+    void playSound(const QString &effect);
+    void showToast(const QString &message, bool isSuccess = false);
+
+    QString m_account;
+    QLabel *toastLabel;
+    QLineEdit *nicknameEdit;
+    QRadioButton *maleRadio;
+    QRadioButton *femaleRadio;
+    QButtonGroup *genderGroup;
+    QLabel *avatarLabel;
+    QPushButton *selectAvatarBtn;
+    QPushButton *completeBtn;
+    QString avatarPath;
+    QPixmap bgPixmap;
+};
+
+#endif // PROFILEWINDOW_H
+#include "profilewindow.h"
+#include "dbmanager.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QPixmap>
+#include <QPainter>
+#include <QDebug>
+#include <QSoundEffect>
+#include <QPropertyAnimation>
+#include <QTimer>
+
+ProfileWindow::ProfileWindow(const QString &account, QWidget *parent)
+    : QWidget(parent), m_account(account), toastLabel(nullptr)
+{
+    setupUI();
+    setBackground();
+}
+
+void ProfileWindow::setupUI()
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("完善信息 - 侦探事务所");
+    resize(500, 800);
+    setMinimumSize(450, 350);
+
+    nicknameEdit = new QLineEdit(this);
+    nicknameEdit->setPlaceholderText("昵称 (1~25字符)");
+    nicknameEdit->setMaxLength(25);
+
+    maleRadio = new QRadioButton("男", this);
+    femaleRadio = new QRadioButton("女", this);
+    genderGroup = new QButtonGroup(this);
+    genderGroup->addButton(maleRadio, 0);
+    genderGroup->addButton(femaleRadio, 1);
+    maleRadio->setChecked(true);
+
+    avatarLabel = new QLabel(this);
+    avatarLabel->setFixedSize(100, 100);
+    avatarLabel->setStyleSheet("border: 2px solid #7a5a44; border-radius: 10px; background-color: #5c3f2e;");
+    avatarLabel->setAlignment(Qt::AlignCenter);
+    avatarLabel->setText("无头像");
+
+    selectAvatarBtn = new QPushButton("选择头像", this);
+    connect(selectAvatarBtn, &QPushButton::clicked, this, &ProfileWindow::onSelectAvatar);
+
+    completeBtn = new QPushButton("完成", this);
+    connect(completeBtn, &QPushButton::clicked, this, &ProfileWindow::onCompleteClicked);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(50, 20, 50, 20);
+    mainLayout->setSpacing(20);
+
+    mainLayout->addStretch(1);
+
+    mainLayout->addWidget(new QLabel("昵称:", this));
+    mainLayout->addWidget(nicknameEdit);
+
+    QHBoxLayout *genderLayout = new QHBoxLayout();
+    genderLayout->setSpacing(20);
+    genderLayout->addWidget(new QLabel("性别:", this));
+    genderLayout->addWidget(maleRadio);
+    genderLayout->addWidget(femaleRadio);
+    genderLayout->addStretch();
+    mainLayout->addLayout(genderLayout);
+
+    QHBoxLayout *avatarLayout = new QHBoxLayout();
+    avatarLayout->setSpacing(20);
+    avatarLayout->addWidget(new QLabel("头像:", this));
+    avatarLayout->addWidget(avatarLabel);
+    avatarLayout->addWidget(selectAvatarBtn);
+    avatarLayout->addStretch();
+    mainLayout->addLayout(avatarLayout);
+
+    mainLayout->addStretch();
+    mainLayout->addWidget(completeBtn);
+    mainLayout->addStretch(1);
+
+    setLayout(mainLayout);
+
+    setStyleSheet(R"(
+        QWidget {
+            color: #e0d6c0;
+            font-size: 14px;
+        }
+        QLineEdit, QRadioButton {
+            background-color: #5c3f2e;
+            border: 2px solid #7a5a44;
+            border-radius: 10px;
+            padding: 8px;
+            color: #f0e6d2;
+        }
+        QRadioButton::indicator {
+            width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            border: 2px solid #7a5a44;
+            background-color: #5c3f2e;
+        }
+        QRadioButton::indicator:checked {
+            background-color: #9b7b62;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 16px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+}
+
+void ProfileWindow::setBackground()
+{
+    if (!bgPixmap.load(":/res/2.jpg")) {
+        qDebug() << "完善信息窗口背景图片加载失败，使用纯色";
+        setAutoFillBackground(true);
+        QPalette pal;
+        pal.setColor(backgroundRole(), QColor(62, 43, 31));
+        setPalette(pal);
+    } else {
+        qDebug() << "完善信息窗口背景图片加载成功";
+    }
+}
+
+void ProfileWindow::paintEvent(QPaintEvent *event)
+{
+    if (!bgPixmap.isNull()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(rect(), bgPixmap.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        painter.fillRect(rect(), QColor(0, 0, 0, 80));
+    } else {
+        QWidget::paintEvent(event);
+    }
+}
+
+void ProfileWindow::showToast(const QString &message, bool isSuccess)
+{
+    if (!toastLabel) {
+        toastLabel = new QLabel(this);
+        toastLabel->setAlignment(Qt::AlignCenter);
+        toastLabel->setStyleSheet(
+            "QLabel {"
+            "   background-color: rgba(62, 43, 31, 220);"
+            "   color: #e0d6c0;"
+            "   border: 2px solid #9b7b62;"
+            "   border-radius: 10px;"
+            "   padding: 10px 20px;"
+            "   font-size: 16px;"
+            "   font-weight: bold;"
+            "}"
+            );
+        toastLabel->hide();
+    }
+
+    toastLabel->setText(message);
+    toastLabel->adjustSize();
+
+    int winWidth = qMax(width(), 1);
+    int toastW = qMax(toastLabel->width(), 1);
+    int toastH = qMax(toastLabel->height(), 1);
+
+    int startX = (winWidth - toastW) / 2;
+    int startY = -toastH;
+    int endY = 20;
+
+    toastLabel->move(startX, startY);
+    toastLabel->show();
+    toastLabel->raise();
+
+    QPropertyAnimation *dropAnim = new QPropertyAnimation(toastLabel, "pos");
+    dropAnim->setDuration(300);
+    dropAnim->setStartValue(QPoint(startX, startY));
+    dropAnim->setEndValue(QPoint(startX, endY));
+    dropAnim->setEasingCurve(QEasingCurve::OutQuad);
+    dropAnim->start(QPropertyAnimation::DeleteWhenStopped);
+
+    QTimer::singleShot(1000, [this]() {
+        if (toastLabel && toastLabel->isVisible()) {
+            QPropertyAnimation *riseAnim = new QPropertyAnimation(toastLabel, "pos");
+            riseAnim->setDuration(300);
+            riseAnim->setStartValue(toastLabel->pos());
+            riseAnim->setEndValue(QPoint(toastLabel->x(), -toastLabel->height()));
+            riseAnim->setEasingCurve(QEasingCurve::InQuad);
+            connect(riseAnim, &QPropertyAnimation::finished, toastLabel, &QLabel::hide);
+            riseAnim->start(QPropertyAnimation::DeleteWhenStopped);
+        }
+    });
+}
+
+void ProfileWindow::onSelectAvatar()
+{
+    playSound("click");
+    QString filePath = QFileDialog::getOpenFileName(this, "选择头像",
+                                                    QDir::homePath(),
+                                                    "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)");
+    if (filePath.isEmpty())
+        return;
+
+    avatarPath = filePath;
+    QPixmap pix(filePath);
+    if (!pix.isNull()) {
+        pix = pix.scaled(avatarLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        avatarLabel->setPixmap(pix);
+        avatarLabel->setText("");
+    } else {
+        avatarLabel->setText("无效图片");
+    }
+}
+
+void ProfileWindow::onCompleteClicked()
+{
+    playSound("click");
+
+    QString nickname = nicknameEdit->text().trimmed();
+    if (nickname.isEmpty() || nickname.length() > 25) {
+        showToast("昵称必须为1~25个字符");
+        return;
+    }
+
+    QString gender = maleRadio->isChecked() ? "男" : "女";
+
+    if (DBManager::saveUserProfile(m_account, nickname, gender, avatarPath)) {
+        QString message = QString("侦探：%1的冒险开始").arg(nickname);
+        showToast(message);
+        // 延迟跳转到游戏主页，确保提示完整显示
+        QTimer::singleShot(1800, [this]() {
+            emit goToGameMain(m_account);
+            this->close();
+        });
+    } else {
+        showToast("保存信息失败，请重试");
+    }
+}
+
+void ProfileWindow::playSound(const QString &effect)
+{
+    static QSoundEffect clickSound;
+    static QSoundEffect successSound;
+    static bool initialized = false;
+
+    if (!initialized) {
+        clickSound.setSource(QUrl("qrc:/res/btnSound.wav"));
+        clickSound.setVolume(1.0f);
+        initialized = true;
+    }
+
+    if (effect == "click") {
+        clickSound.play();
+    } else if (effect == "success") {
+        successSound.play();
+    }
+}
+#ifndef REGISTERWINDOW_H
+#define REGISTERWINDOW_H
+
+#include <QWidget>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QLabel>
+#include <QCheckBox>
+#include <QPixmap>
+
+class RegisterWindow : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit RegisterWindow(QWidget *parent = nullptr);
+
+signals:
+    void showLoginWindow();
+
+private slots:
+    void onConfirmClicked();
+    void onBackClicked();
+    void togglePasswordVisibility(bool checked);
+    void toggleConfirmVisibility(bool checked);
+    void updateMusicIcon(bool muted);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+
+private:
+    void setupUI();
+    void setBackground();
+    void playSound(const QString &effect);
+    bool validatePassword(const QString &pwd);
+    void showToast(const QString &message);
+
+    QPushButton *musicBtn;
+    QLabel *toastLabel;
+    QLineEdit *usernameEdit;
+    QLineEdit *passwordEdit;
+    QLineEdit *confirmEdit;
+    QCheckBox *showPasswordCheck;
+    QCheckBox *showConfirmCheck;
+    QPushButton *confirmBtn;
+    QPushButton *backBtn;
+    QPixmap bgPixmap;
+};
+
+#endif // REGISTERWINDOW_H
+#include "registerwindow.h"
+#include "dbmanager.h"
+#include "musicmanager.h"  // 新增
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
+#include <QPainter>
+#include <QDebug>
+#include <QSoundEffect>
+#include <QPropertyAnimation>
+#include <QTimer>
+
+RegisterWindow::RegisterWindow(QWidget *parent)
+    : QWidget(parent), toastLabel(nullptr)
+{
+    setupUI();
+    setBackground();
+
+    // 初始化音乐按钮图标并连接状态信号
+    updateMusicIcon(MusicManager::instance().isMuted());
+    connect(&MusicManager::instance(), &MusicManager::muteStateChanged,
+            this, &RegisterWindow::updateMusicIcon);
+}
+
+void RegisterWindow::setupUI()
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("注册 - 侦探事务所");
+    resize(500, 800);
+    setMinimumSize(450, 350);
+
+    // 创建音乐控制按钮（与登录窗口一致）
+    musicBtn = new QPushButton(this);
+    musicBtn->setFixedSize(36, 36);
+    musicBtn->setCursor(Qt::PointingHandCursor);
+    musicBtn->setFlat(true);  // 扁平样式
+    musicBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            border-radius: 18px;
+            padding: 0px;
+        }
+        QPushButton:hover {
+            background-color: rgba(155, 123, 98, 0.3);
+        }
+        QPushButton:pressed {
+            background-color: rgba(92, 63, 46, 0.5);
+        }
+    )");
+
+    connect(musicBtn, &QPushButton::clicked, this, [](){
+        MusicManager::instance().toggleMute();
+    });
+
+    // 创建标题标签（与登录窗口保持一致）
+    QLabel *titleLabel = new QLabel("侦探事务所", this);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet(
+        "color: white;"
+        "font: bold 50px '华文楷体', 'Microsoft YaHei', 'SimHei', serif;"
+        );
+
+    usernameEdit = new QLineEdit(this);
+    usernameEdit->setPlaceholderText("账号 (11位数字或字母)");
+    usernameEdit->setMaxLength(11);
+    QRegularExpression rx("[a-zA-Z0-9]{11}");
+    QValidator *validator = new QRegularExpressionValidator(rx, this);
+    usernameEdit->setValidator(validator);
+
+    passwordEdit = new QLineEdit(this);
+    passwordEdit->setPlaceholderText("密码 (6-20位，含大小写字母)");
+    passwordEdit->setEchoMode(QLineEdit::Password);
+    passwordEdit->setMaxLength(20);
+
+    confirmEdit = new QLineEdit(this);
+    confirmEdit->setPlaceholderText("确认密码");
+    confirmEdit->setEchoMode(QLineEdit::Password);
+    confirmEdit->setMaxLength(10);
+
+    showPasswordCheck = new QCheckBox("显示密码", this);
+    connect(showPasswordCheck, &QCheckBox::toggled, this, &RegisterWindow::togglePasswordVisibility);
+
+    showConfirmCheck = new QCheckBox("显示确认密码", this);
+    connect(showConfirmCheck, &QCheckBox::toggled, this, &RegisterWindow::toggleConfirmVisibility);
+
+    confirmBtn = new QPushButton("确认注册", this);
+    backBtn = new QPushButton("返回登录", this);
+
+    connect(confirmBtn, &QPushButton::clicked, this, &RegisterWindow::onConfirmClicked);
+    connect(backBtn, &QPushButton::clicked, this, &RegisterWindow::onBackClicked);
+
+    // 主布局：垂直排列，带边距和间距
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(50, 20, 50, 20);
+    mainLayout->setSpacing(20);
+
+    // 顶部栏：音乐按钮在右上角
+    QHBoxLayout *topBarLayout = new QHBoxLayout();
+    topBarLayout->addStretch();       // 弹性空间将按钮推到右侧
+    topBarLayout->addWidget(musicBtn);
+    mainLayout->addLayout(topBarLayout);
+
+    // 标题标签，居中显示
+    mainLayout->addWidget(titleLabel, 0, Qt::AlignHCenter);
+    mainLayout->addSpacing(30);       // 标题与下方控件拉开距离
+
+    // 原有控件（保持居中）
+    mainLayout->addStretch(1);        // 上方弹性空间
+    mainLayout->addWidget(usernameEdit);
+    mainLayout->addWidget(passwordEdit);
+    mainLayout->addWidget(confirmEdit);
+    mainLayout->addWidget(showPasswordCheck);
+    mainLayout->addWidget(showConfirmCheck);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->setSpacing(20);
+    btnLayout->addWidget(confirmBtn);
+    btnLayout->addWidget(backBtn);
+    mainLayout->addLayout(btnLayout);
+
+    mainLayout->addStretch(1);        // 底部弹性空间
+
+    setLayout(mainLayout);
+
+    // 样式表（与登录窗口一致，无需修改）
+    setStyleSheet(R"(
+        QLineEdit {
+            background-color: #5c3f2e;
+            border: 2px solid #7a5a44;
+            border-radius: 10px;
+            padding: 8px;
+            color: #f0e6d2;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 16px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+        QCheckBox {
+            color: #e0d6c0;
+        }
+        QCheckBox::indicator {
+            width: 20px;
+            height: 20px;
+        }
+        QCheckBox::indicator:unchecked {
+            background-color: #5c3f2e;
+            border: 2px solid #7a5a44;
+            border-radius: 4px;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #9b7b62;
+            border: 2px solid #7a5a44;
+            border-radius: 4px;
+        }
+    )");
+}
+
+void RegisterWindow::updateMusicIcon(bool muted)
+{
+    QString iconPath = muted ? ":/res/musicBimg2.jpg" : ":/res/musicBimg1.jpg";
+
+    QPixmap pixmap(iconPath);
+    if (pixmap.isNull()) {
+        qDebug() << "音乐图标加载失败:" << iconPath;
+        return;
+    }
+
+    // 将图片裁剪成圆形
+    QPixmap rounded(pixmap.size());
+    rounded.fill(Qt::transparent);
+
+    QPainter painter(&rounded);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(QBrush(pixmap.scaled(pixmap.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(rounded.rect());
+    painter.end();
+
+    musicBtn->setIcon(QIcon(rounded));
+    musicBtn->setIconSize(QSize(28, 28));  // 图标比按钮略小，留出边距
+}
+
+
+void RegisterWindow::setBackground()
+{
+    if (!bgPixmap.load(":/res/2.jpg")) {
+        qDebug() << "注册窗口背景图片加载失败，使用纯色";
+        setAutoFillBackground(true);
+        QPalette pal;
+        pal.setColor(backgroundRole(), QColor(62, 43, 31));
+        setPalette(pal);
+    } else {
+        qDebug() << "注册窗口背景图片加载成功";
+    }
+}
+
+void RegisterWindow::paintEvent(QPaintEvent *event)
+{
+    if (!bgPixmap.isNull()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(rect(), bgPixmap.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        painter.fillRect(rect(), QColor(0, 0, 0, 80));
+    } else {
+        QWidget::paintEvent(event);
+    }
+}
+
+void RegisterWindow::togglePasswordVisibility(bool checked)
+{
+    passwordEdit->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
+}
+
+void RegisterWindow::toggleConfirmVisibility(bool checked)
+{
+    confirmEdit->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
+}
+
+bool RegisterWindow::validatePassword(const QString &pwd)
+{
+    if (pwd.length() < 6 || pwd.length() > 10) return false;
+    bool hasLower = false, hasUpper = false;
+    for (QChar ch : pwd) {
+        if (ch.isLower()) hasLower = true;
+        if (ch.isUpper()) hasUpper = true;
+    }
+    return hasLower && hasUpper;
+}
+
+void RegisterWindow::showToast(const QString &message)
+{
+    if (!toastLabel) {
+        // 创建独立窗口，不受父窗口透明度影响
+        toastLabel = new QLabel(nullptr);
+        toastLabel->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+        toastLabel->setAlignment(Qt::AlignCenter);
+        toastLabel->setStyleSheet(
+            "QLabel {"
+            "   background-color: rgb(62, 43, 31);"
+            "   color: white;"
+            "   border: 2px solid #9b7b62;"
+            "   border-radius: 10px;"
+            "   padding: 10px 20px;"
+            "   font: bold 16px 'Microsoft YaHei', 'Arial', sans-serif;"
+            "}"
+            );
+        toastLabel->hide();
+    }
+
+    toastLabel->setText(message);
+    toastLabel->adjustSize();
+
+    QPoint parentTopLeft = mapToGlobal(QPoint(0, 0));
+    int winWidth = width();
+    int toastW = toastLabel->width();
+    int toastH = toastLabel->height();
+
+    int globalStartX = parentTopLeft.x() + (winWidth - toastW) / 2;
+    int globalStartY = parentTopLeft.y() - toastH;
+    int globalEndY = parentTopLeft.y() + 20;
+
+    toastLabel->move(globalStartX, globalStartY);
+    toastLabel->show();
+    toastLabel->raise();
+
+    QPropertyAnimation *dropAnim = new QPropertyAnimation(toastLabel, "pos");
+    dropAnim->setDuration(500);
+    dropAnim->setStartValue(QPoint(globalStartX, globalStartY));
+    dropAnim->setEndValue(QPoint(globalStartX, globalEndY));
+    dropAnim->setEasingCurve(QEasingCurve::OutQuad);
+    dropAnim->start(QPropertyAnimation::DeleteWhenStopped);
+
+    QTimer::singleShot(1000, [this, globalStartX, globalEndY, toastH]() {
+        if (toastLabel && toastLabel->isVisible()) {
+            QPropertyAnimation *riseAnim = new QPropertyAnimation(toastLabel, "pos");
+            riseAnim->setDuration(300);
+            riseAnim->setStartValue(QPoint(globalStartX, globalEndY));
+            riseAnim->setEndValue(QPoint(globalStartX, globalEndY - toastH - 20));
+            riseAnim->setEasingCurve(QEasingCurve::InQuad);
+            connect(riseAnim, &QPropertyAnimation::finished, toastLabel, &QLabel::hide);
+            riseAnim->start(QPropertyAnimation::DeleteWhenStopped);
+        }
+    });
+}
+
+void RegisterWindow::onConfirmClicked()
+{
+    playSound("click");
+
+    QString account = usernameEdit->text().trimmed();
+    QString password = passwordEdit->text();
+    QString confirm = confirmEdit->text();
+
+    if (account.length() != 11) {
+        showToast("账号必须为11位");
+        return;
+    }
+
+    if (!validatePassword(password)) {
+        showToast("密码必须为6-20位，且包含大小写字母");
+        return;
+    }
+
+    if (password != confirm) {
+        showToast("两次输入的密码不一致");
+        return;
+    }
+
+    if (DBManager::userExists(account)) {
+        showToast("账号已存在，请直接登录");
+        return;
+    }
+
+    if (DBManager::addUserCredential(account, password)) {
+        showToast("注册完成！");
+        QTimer::singleShot(1800, [this]() {
+            onBackClicked();
+        });
+    } else {
+        showToast("注册失败，请稍后重试");
+    }
+}
+
+void RegisterWindow::onBackClicked()
+{
+    playSound("click");
+    emit showLoginWindow();
+    this->close();
+}
+
+void RegisterWindow::playSound(const QString &effect)
+{
+    if (effect != "click")
+        return;
+
+    static QSoundEffect clickSound;
+    static bool initialized = false;
+
+    if (!initialized) {
+        clickSound.setSource(QUrl("qrc:/res/btnSound.wav"));
+        clickSound.setVolume(1.0f);
+        initialized = true;
+    }
+
+    clickSound.play();
+}
+#ifndef LEVELBASE_H
+#define LEVELBASE_H
+
+#include <QWidget>
+#include <QLabel>
+#include <QPushButton>
+#include <QProgressBar>
+#include <QTextEdit>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFrame>
+#include <QGridLayout>
+#include <QScrollArea>
+#include <QMap>
+#include <QPoint>
+#include <QSoundEffect>
+#include <QDialog>
+#include <QLineEdit>
+#include <QTimer>
+#include <opencv2/opencv.hpp>
+
+class LevelBase : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit LevelBase(int levelId, const QString &account, QWidget *parent = nullptr);
+    virtual ~LevelBase();
+
+    void addStoryText(const QString &text);
+    void nextStory();
+    void prevStory();
+    void addProgress(int value);
+
+signals:
+    void levelCompleted(int levelId);
+    void backToMain();
+
+protected:
+    void setupUI();
+    void setupStoryArea();
+    void createBackpackButton();
+    void createBackpackBox();
+    void showBackpackBox();
+    void hideBackpackBox();
+    void loadBackpackClues();
+    void updateCellWithClue(int gridIndex, const QString &clueName, const QString &imagePath);
+    void showNamingDialog(const QString &imagePath);
+    void addClueWithName(const QString &clueName, const QString &imagePath);
+    void onUploadClue();
+    void onCaptureClue();
+    void playClickSound();
+
+
+    void setupBottomArea();
+    void createUsefulClueBox();
+    void createIdentifyButtons();
+    void onUploadIdentify();
+    void onCameraIdentify();
+    bool addToUsefulClueBox(const QString &clueType, const QString &clueName, const QString &imagePath);
+    bool identifyClue(const cv::Mat &image);
+    void captureAndIdentify();
+
+    void startCamera();
+    void stopCamera();
+    void updateCameraFrame();
+    void showIdentifyResult(bool success, const QString &clueName = "");
+    void showNamingDialogForIdentify(const QString &imagePath, const QString &clueType);
+
+    void showToast(const QString &message);
+    void showEnlargedImage(const QString &imagePath, const QString &clueName);
+
+    // ========== 嫌犯笔记本相关函数 ==========
+    void createNotebookButton();
+    void createNotebookBox();
+    void showNotebookBox();
+    void hideNotebookBox();
+    void onNotebookSave();
+    void setInteractionEnabled(bool enabled);
+
+    // ========== 人物对话系统 ==========
+    void showCharacterDialog(const QString &avatarPath, const QString &name, const QStringList &dialogues);
+    void hideCharacterDialog();
+    void startCurrentDialog();
+    void updateDialogText();
+    void onDialogContinue();
+    void setDialogInteractionEnabled(bool enabled);
+
+    void showLevelCompleteDialog();
+
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
+    virtual void initStory();
+    virtual void onClueFound();
+
+    // ========== 实时识别相关函数 ==========
+    QString identifyClueWithResult(const cv::Mat &image);
+    bool isTargetClue(const QString &clueName) const;
+    void saveCurrentFrameAndAdd(const QString &clueName);
+
+    // ========== 根据关卡获取类别数量和名称 ==========
+    int getClassCountByLevel(int levelId) const;
+    QString getClueNameByLevel(int levelId, int classId) const;
+
+    // ========== 模型路径 ==========
+    QString m_modelPath;
+
+    int m_levelId;
+    QString m_account;
+    int m_currentStoryIndex;
+    QStringList m_stories;
+    int m_usefulCluesCount;
+    int m_maxUsefulClues;
+
+    QPushButton *m_backBtn;
+    QProgressBar *m_progressBar;
+    QFrame *m_topFrame;
+    QFrame *m_bottomFrame;
+    QTextEdit *m_storyText;
+    QPushButton *m_nextBtn;
+    QPushButton *m_prevBtn;
+
+    QPushButton *m_backpackBtn;
+    QWidget *m_backpackOverlay;
+    QWidget *m_backpackBox;
+    QPushButton *m_backpackCloseBtn;
+    QScrollArea *m_backpackScrollArea;
+    QWidget *m_backpackContent;
+    QPushButton *m_uploadBtn;
+    QPushButton *m_captureBtn;
+    QMap<int, QLabel*> m_backpackCells;
+    QMap<QLabel*, QString> m_cellClueNames;
+    QMap<QLabel*, QString> m_cellImagePaths;
+    QLabel *m_currentRightClickCell;
+    QString m_currentClueName;
+    QPoint m_rightClickPos;
+
+    QDialog *m_nameDialog;
+    QLineEdit *m_nameEdit;
+    QPushButton *m_confirmBtn;
+    QPushButton *m_cancelBtn;
+    QString m_selectedImagePath;
+    QString m_currentClueType;
+
+    QFrame *m_usefulClueFrame;
+    QGridLayout *m_usefulClueGrid;
+    QMap<int, QLabel*> m_usefulClueCells;
+    QPushButton *m_uploadIdentifyBtn;
+    QPushButton *m_cameraIdentifyBtn;
+    int m_usefulClueIndex;
+
+    QDialog *m_cameraDialog;
+    QLabel *m_cameraViewLabel;
+    QTimer *m_cameraTimer;
+    cv::VideoCapture m_cap;
+    cv::Mat m_currentFrame;
+    bool m_isCameraRunning;
+    QPushButton *m_captureIdentifyBtn;
+
+    // ========== 嫌犯笔记本相关成员 ==========
+    QPushButton *m_notebookBtn;
+    QWidget *m_notebookOverlay;
+    QWidget *m_notebookBox;
+    QTextEdit *m_notebookText;
+    QPushButton *m_notebookCloseBtn;
+    QPushButton *m_notebookSaveBtn;
+    bool m_isNotebookOpen;
+
+    // ========== 实时识别防抖相关成员 ==========
+    bool m_isIdentifying;
+    QTimer *m_identifyCooldown;
+
+    // ========== 人物对话系统成员 ==========
+    QWidget *m_dialogWidget;
+    QLabel *m_avatarLabel;
+    QLabel *m_nameLabel;
+    QTextEdit *m_dialogText;
+    QPushButton *m_dialogContinueBtn;
+    QStringList m_currentDialogues;
+    int m_currentDialogIndex;
+    QString m_currentTargetText;
+    QString m_currentDisplayText;
+    QTimer *m_typewriterTimer;
+    int m_typewriterPos;
+    bool m_isDialogShowing;
+
+    QSoundEffect *m_clickSound;
+};
+
+#endif // LEVELBASE_H
+#include "LevelBase.h"
+#include "dbmanager.h"
+#include <QDebug>
+#include <QPainter>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QMenu>
+#include <QAction>
+#include <QDialog>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QLineEdit>
+#include <QScrollArea>
+#include <QPropertyAnimation>
+#include <QPushButton>
+#include <QLabel>
+#include <QTextEdit>
+#include <QProgressBar>
+#include <QFrame>
+#include <QFileDialog>
+#include <QDir>
+#include <QCamera>
+#include <QMediaDevices>
+#include <QMediaCaptureSession>
+#include <QImageCapture>
+#include <QVideoWidget>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QCoreApplication>
+#include <QMessageBox>
+#include <opencv2/core.hpp>
+#include <opencv2/dnn.hpp>
+#include <QGraphicsOpacityEffect>
+#include <QSequentialAnimationGroup>
+#include <QPauseAnimation>
+// #include <algorithm>
+// #include <cmath>
+
+LevelBase::LevelBase(int levelId, const QString &account, QWidget *parent)
+    : QWidget(parent)
+    , m_levelId(levelId)
+    , m_account(account)
+    , m_currentStoryIndex(0)
+    , m_usefulCluesCount(0)
+    , m_maxUsefulClues(3)
+    , m_backBtn(nullptr)
+    , m_progressBar(nullptr)
+    , m_topFrame(nullptr)
+    , m_bottomFrame(nullptr)
+    , m_storyText(nullptr)
+    , m_nextBtn(nullptr)
+    , m_prevBtn(nullptr)
+    , m_backpackBtn(nullptr)
+    , m_backpackOverlay(nullptr)
+    , m_backpackBox(nullptr)
+    , m_backpackCloseBtn(nullptr)
+    , m_backpackScrollArea(nullptr)
+    , m_backpackContent(nullptr)
+    , m_uploadBtn(nullptr)
+    , m_captureBtn(nullptr)
+    , m_currentRightClickCell(nullptr)
+    , m_nameDialog(nullptr)
+    , m_nameEdit(nullptr)
+    , m_confirmBtn(nullptr)
+    , m_cancelBtn(nullptr)
+    , m_usefulClueFrame(nullptr)
+    , m_usefulClueGrid(nullptr)
+    , m_uploadIdentifyBtn(nullptr)
+    , m_cameraIdentifyBtn(nullptr)
+    , m_usefulClueIndex(0)
+    , m_cameraDialog(nullptr)
+    , m_cameraViewLabel(nullptr)
+    , m_cameraTimer(nullptr)
+    , m_isCameraRunning(false)
+    , m_captureIdentifyBtn(nullptr)
+    , m_notebookBtn(nullptr)
+    , m_notebookOverlay(nullptr)
+    , m_notebookBox(nullptr)
+    , m_notebookText(nullptr)
+    , m_notebookCloseBtn(nullptr)
+    , m_notebookSaveBtn(nullptr)
+    , m_isNotebookOpen(false)
+    , m_dialogWidget(nullptr)
+    , m_avatarLabel(nullptr)
+    , m_nameLabel(nullptr)
+    , m_dialogText(nullptr)
+    , m_dialogContinueBtn(nullptr)
+    , m_currentDialogIndex(0)
+    , m_typewriterTimer(nullptr)
+    , m_typewriterPos(0)
+    , m_isDialogShowing(false)
+    , m_clickSound(nullptr)
+{
+    qDebug() << "===== LevelBase 构造函数开始 =====";
+    qDebug() << "关卡ID:" << m_levelId;
+    qDebug() << "账号:" << m_account;
+
+    m_clickSound = new QSoundEffect(this);
+    m_clickSound->setSource(QUrl("qrc:/res/btnS4.wav"));
+    m_clickSound->setVolume(1);
+    m_clickSound->setLoopCount(1);
+
+    setupUI();
+    loadBackpackClues();
+
+    qDebug() << "===== LevelBase 构造函数结束 =====";
+}
+
+LevelBase::~LevelBase()
+{
+    if (m_clickSound) {
+        m_clickSound->stop();
+    }
+}
+
+void LevelBase::playClickSound()
+{
+    if (m_clickSound && m_clickSound->isLoaded()) {
+        m_clickSound->play();
+    }
+}
+
+void LevelBase::setupUI()
+{
+    qDebug() << "LevelBase::setupUI() 开始";
+
+    setFixedSize(500, 800);
+    setStyleSheet(R"(
+        QWidget {
+            background-color: #2c1e12;
+        }
+        QFrame {
+            border: none;
+        }
+        QTextEdit {
+            background-color: rgba(210, 180, 140, 200);
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            color: #2c1e12;
+            font-size: 18px;
+            padding: 10px;
+            font-family: 'Microsoft YaHei', 'Arial', sans-serif;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 8px;
+            padding: 5px 15px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+        QProgressBar {
+            border: 2px solid #9b7b62;
+            border-radius: 5px;
+            text-align: center;
+            color: #e0d6c0;
+            background-color: #5c3f2e;
+        }
+        QProgressBar::chunk {
+            background-color: #d4af37;
+            border-radius: 3px;
+        }
+    )");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+
+    m_topFrame = new QFrame(this);
+    m_topFrame->setStyleSheet("background-color: rgba(0, 0, 0, 0);");
+
+    QVBoxLayout *topLayout = new QVBoxLayout(m_topFrame);
+    topLayout->setContentsMargins(10, 10, 10, 10);
+    topLayout->setSpacing(10);
+
+    QHBoxLayout *toolbarLayout = new QHBoxLayout();
+
+    m_backBtn = new QPushButton("←", this);
+    m_backBtn->setFixedSize(30, 30);
+    m_backBtn->setStyleSheet(R"(
+        QPushButton {
+            font-size: 20px;
+            font-weight: bold;
+            padding: 0px;
+        }
+    )");
+    connect(m_backBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        emit backToMain();
+    });
+
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setFixedHeight(20);
+    m_progressBar->setTextVisible(true);
+    m_progressBar->setFormat("线索收集: %p%");
+    m_progressBar->setValue(0);
+
+    toolbarLayout->addWidget(m_backBtn);
+    toolbarLayout->addWidget(m_progressBar);
+
+    QFrame *line1 = new QFrame(this);
+    line1->setFrameShape(QFrame::HLine);
+    line1->setFixedHeight(2);
+    line1->setStyleSheet("background-color: #9b7b62;");
+
+    m_storyText = new QTextEdit(this);
+    m_storyText->setReadOnly(true);
+    m_storyText->setMinimumHeight(250);
+    m_storyText->setPlaceholderText("剧情将在这里显示...");
+    m_storyText->setStyleSheet(R"(
+        QTextEdit {
+            background-color: rgba(210, 180, 140, 200);
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            color: #2c1e12;
+            font-size: 22px;
+            font-weight: bold;
+            padding: 10px;
+            font-family: 'STXingkai', 'Microsoft YaHei', 'Arial', sans-serif;
+        }
+    )");
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_prevBtn = new QPushButton("回忆", this);
+    m_nextBtn = new QPushButton("继续", this);
+
+    m_prevBtn->setFixedWidth(100);
+    m_nextBtn->setFixedWidth(100);
+    m_prevBtn->setEnabled(false);
+    m_nextBtn->setEnabled(true);
+
+    connect(m_nextBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        nextStory();
+    });
+    connect(m_prevBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        prevStory();
+    });
+
+    btnLayout->addStretch();
+    btnLayout->addWidget(m_prevBtn);
+    btnLayout->addSpacing(60);
+    btnLayout->addWidget(m_nextBtn);
+    btnLayout->addStretch();
+
+    topLayout->addLayout(toolbarLayout);
+    topLayout->addWidget(line1);
+    topLayout->addWidget(m_storyText, 1);
+    topLayout->addLayout(btnLayout);
+
+    QFrame *line2 = new QFrame(this);
+    line2->setFrameShape(QFrame::HLine);
+    line2->setFixedHeight(2);
+    line2->setStyleSheet("background-color: #9b7b62;");
+
+    m_bottomFrame = new QFrame(this);
+    m_bottomFrame->setStyleSheet("background-color: rgba(0, 0, 0, 0);");
+
+    QVBoxLayout *bottomLayout = new QVBoxLayout(m_bottomFrame);
+    bottomLayout->setContentsMargins(10, 10, 10, 10);
+
+    mainLayout->addWidget(m_topFrame, 1);
+    mainLayout->addWidget(line2);
+    mainLayout->addWidget(m_bottomFrame, 1);
+
+    setLayout(mainLayout);
+
+    setupBottomArea();
+
+    createBackpackButton();
+    createBackpackBox();
+    createNotebookButton();
+
+    qDebug() << "LevelBase::setupUI() 结束";
+}
+
+void LevelBase::showToast(const QString &message)
+{
+    QLabel *toast = new QLabel(message, nullptr);
+    toast->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+    toast->setAlignment(Qt::AlignCenter);
+    toast->setStyleSheet(
+        "QLabel {"
+        "   background-color: rgb(62, 43, 31);"
+        "   color: white;"
+        "   border: 2px solid #9b7b62;"
+        "   border-radius: 10px;"
+        "   padding: 10px 20px;"
+        "   font: bold 16px 'Microsoft YaHei', 'Arial', sans-serif;"
+        "}"
+        );
+    toast->adjustSize();
+
+    QPoint parentTopLeft = mapToGlobal(QPoint(0, 0));
+    int winWidth = width();
+    int toastW = toast->width();
+    int toastH = toast->height();
+
+    int globalStartX = parentTopLeft.x() + (winWidth - toastW) / 2;
+    int globalStartY = parentTopLeft.y() - toastH;
+    int globalEndY = parentTopLeft.y() + 20;
+
+    toast->move(globalStartX, globalStartY);
+    toast->show();
+    toast->raise();
+
+    QPropertyAnimation *dropAnim = new QPropertyAnimation(toast, "pos");
+    dropAnim->setDuration(500);
+    dropAnim->setStartValue(QPoint(globalStartX, globalStartY));
+    dropAnim->setEndValue(QPoint(globalStartX, globalEndY));
+    dropAnim->setEasingCurve(QEasingCurve::OutQuad);
+    dropAnim->start(QPropertyAnimation::DeleteWhenStopped);
+
+    QTimer::singleShot(1000, [toast, globalStartX, globalEndY, toastH]() {
+        if (toast && toast->isVisible()) {
+            QPropertyAnimation *riseAnim = new QPropertyAnimation(toast, "pos");
+            riseAnim->setDuration(300);
+            riseAnim->setStartValue(QPoint(globalStartX, globalEndY));
+            riseAnim->setEndValue(QPoint(globalStartX, globalEndY - toastH - 20));
+            riseAnim->setEasingCurve(QEasingCurve::InQuad);
+            connect(riseAnim, &QPropertyAnimation::finished, toast, &QLabel::deleteLater);
+            riseAnim->start(QPropertyAnimation::DeleteWhenStopped);
+        }
+    });
+}
+
+void LevelBase::createBackpackButton()
+{
+    m_backpackBtn = new QPushButton(this);
+    m_backpackBtn->setFixedSize(90, 90);
+    m_backpackBtn->setCursor(Qt::PointingHandCursor);
+    m_backpackBtn->setFlat(true);
+    m_backpackBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            border-radius: 45px;
+            padding: 0px;
+        }
+        QPushButton:hover {
+            background-color: rgba(155, 123, 98, 0.3);
+        }
+        QPushButton:pressed {
+            background-color: rgba(92, 63, 46, 0.5);
+        }
+    )");
+
+    QPixmap backpackPixmap(":/res/backpage.png");
+    if (!backpackPixmap.isNull()) {
+        QPixmap rounded(backpackPixmap.size());
+        rounded.fill(Qt::transparent);
+        QPainter painter(&rounded);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QBrush(backpackPixmap.scaled(backpackPixmap.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(rounded.rect());
+        painter.end();
+        m_backpackBtn->setIcon(QIcon(rounded));
+        m_backpackBtn->setIconSize(QSize(75, 75));
+    } else {
+        qDebug() << "背包图标加载失败";
+    }
+
+    connect(m_backpackBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        showBackpackBox();
+    });
+
+    m_backpackBtn->setParent(this);
+    m_backpackBtn->move(20, height() - 110);
+}
+
+void LevelBase::createBackpackBox()
+{
+    if (m_backpackBox) return;
+
+    if (!m_backpackOverlay) {
+        m_backpackOverlay = new QWidget(this);
+        m_backpackOverlay->setGeometry(rect());
+        m_backpackOverlay->setStyleSheet("background-color: rgba(0, 0, 0, 120);");
+        m_backpackOverlay->lower();
+        m_backpackOverlay->hide();
+    }
+
+    m_backpackBox = new QWidget(this);
+    m_backpackBox->setFixedSize(480, 560);
+    m_backpackBox->setStyleSheet(R"(
+        QWidget {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #9b7b62;
+            border-radius: 25px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 15px;
+            padding: 10px;
+            font-weight: bold;
+            color: #e0d6c0;
+            font-size: 16px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+    m_backpackBox->hide();
+
+    m_backpackCloseBtn = new QPushButton("×", m_backpackBox);
+    m_backpackCloseBtn->setFixedSize(36, 36);
+    m_backpackCloseBtn->setCursor(Qt::PointingHandCursor);
+    m_backpackCloseBtn->setStyleSheet(
+        "QPushButton {"
+        "   background-color: transparent;"
+        "   border: none;"
+        "   border-radius: 18px;"
+        "   color: white;"
+        "   font-size: 24px;"
+        "   font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "   background-color: rgba(155, 123, 98, 0.8);"
+        "}"
+        );
+    connect(m_backpackCloseBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        hideBackpackBox();
+    });
+
+    m_backpackScrollArea = new QScrollArea(m_backpackBox);
+    m_backpackScrollArea->setStyleSheet(R"(
+        QScrollArea {
+            border: 2px solid #9b7b62;
+            border-radius: 15px;
+            background-color: #D2B48C;
+            margin: 15px;
+        }
+        QScrollBar:vertical {
+            border: none;
+            background: rgba(62, 43, 31, 180);
+            width: 8px;
+            border-radius: 6px;
+        }
+        QScrollBar::handle:vertical {
+            background: #9b7b62;
+            border-radius: 6px;
+            min-height: 30px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #b59570;
+        }
+    )");
+    m_backpackScrollArea->setFixedSize(440, 350);
+    m_backpackScrollArea->setWidgetResizable(true);
+    m_backpackScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_backpackScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_backpackScrollArea->move(20, 50);
+
+    m_backpackContent = new QWidget();
+    m_backpackContent->setStyleSheet("background-color: transparent;");
+    m_backpackScrollArea->setWidget(m_backpackContent);
+
+    QGridLayout *gridLayout = new QGridLayout(m_backpackContent);
+    gridLayout->setContentsMargins(10, 10, 10, 10);
+    gridLayout->setSpacing(5);
+
+    for (int row = 0; row < 7; ++row) {
+        for (int col = 0; col < 7; ++col) {
+            QLabel *cell = new QLabel();
+            cell->setFixedSize(50, 50);
+            cell->setStyleSheet(R"(
+                QLabel {
+                    background-color: rgba(92, 63, 46, 150);
+                    border: 1px solid #9b7b62;
+                    border-radius: 8px;
+                }
+                QLabel:hover {
+                    background-color: rgba(155, 123, 98, 150);
+                    border: 2px solid #b59570;
+                }
+            )");
+            cell->setAlignment(Qt::AlignCenter);
+            cell->setText("");
+            cell->installEventFilter(this);
+
+            int index = row * 7 + col;
+            m_backpackCells[index] = cell;
+            gridLayout->addWidget(cell, row, col);
+        }
+    }
+
+    QFrame *line = new QFrame(m_backpackBox);
+    line->setGeometry(20, 420, 440, 4);
+    line->setFrameShape(QFrame::HLine);
+    line->setStyleSheet("background-color: #9b7b62; border: none;");
+
+    m_uploadBtn = new QPushButton("上传线索", m_backpackBox);
+    m_uploadBtn->setGeometry(70, 450, 150, 50);
+    m_uploadBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_uploadBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        onUploadClue();
+    });
+
+    m_captureBtn = new QPushButton("拍摄线索", m_backpackBox);
+    m_captureBtn->setGeometry(260, 450, 150, 50);
+    m_captureBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_captureBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        onCaptureClue();
+    });
+}
+
+void LevelBase::onUploadClue()
+{
+    playClickSound();
+
+    if (m_cellClueNames.size() >= 49) {
+        qDebug() << "背包已满，无法添加新线索";
+        return;
+    }
+
+    QString filePath = QFileDialog::getOpenFileName(this, "选择线索图片", QDir::homePath(), "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)");
+
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    showNamingDialog(filePath);
+}
+
+void LevelBase::onCaptureClue()
+{
+    playClickSound();
+
+    if (m_cellClueNames.size() >= 49) {
+        qDebug() << "背包已满，无法添加新线索";
+        return;
+    }
+
+    QDialog *captureDialog = new QDialog(this);
+    captureDialog->setWindowTitle("拍照线索");
+    captureDialog->setFixedSize(640, 520);
+    captureDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #9b7b62;
+            border-radius: 15px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 16px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+
+    QCamera *camera = new QCamera(QMediaDevices::defaultVideoInput(), captureDialog);
+    QVideoWidget *viewfinder = new QVideoWidget(captureDialog);
+    viewfinder->setFixedSize(600, 400);
+
+    QMediaCaptureSession *captureSession = new QMediaCaptureSession(captureDialog);
+    captureSession->setCamera(camera);
+    captureSession->setVideoOutput(viewfinder);
+
+    QImageCapture *imageCapture = new QImageCapture(captureDialog);
+    imageCapture->setFileFormat(QImageCapture::JPEG);
+    captureSession->setImageCapture(imageCapture);
+
+    QVBoxLayout *layout = new QVBoxLayout(captureDialog);
+    layout->addWidget(viewfinder);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    QPushButton *captureBtn = new QPushButton("拍照", captureDialog);
+    QPushButton *cancelBtn = new QPushButton("取消", captureDialog);
+    btnLayout->addStretch();
+    btnLayout->addWidget(captureBtn);
+    btnLayout->addWidget(cancelBtn);
+    btnLayout->addStretch();
+    layout->addLayout(btnLayout);
+
+    captureDialog->setLayout(layout);
+
+    camera->start();
+
+    connect(captureBtn, &QPushButton::clicked, this, [=]() {
+        playClickSound();
+
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmsszzz");
+        QString tempDir = QCoreApplication::applicationDirPath() + "/MyGameClues";
+        QDir dir(tempDir);
+        if (!dir.exists()) dir.mkpath(".");
+        QString filePath = tempDir + "/capture_" + timestamp + ".jpg";
+
+        imageCapture->captureToFile(filePath);
+    });
+
+    connect(imageCapture, &QImageCapture::imageSaved, this, [=](int id, const QString &fileName) {
+        Q_UNUSED(id);
+        camera->stop();
+        captureDialog->accept();
+        showNamingDialog(fileName);
+    });
+
+    connect(cancelBtn, &QPushButton::clicked, captureDialog, &QDialog::reject);
+
+    captureDialog->exec();
+    captureDialog->deleteLater();
+}
+
+void LevelBase::showNamingDialog(const QString &imagePath)
+{
+    m_selectedImagePath = imagePath;
+
+    m_nameDialog = new QDialog(this);
+    m_nameDialog->setWindowTitle("命名线索");
+    m_nameDialog->setFixedSize(300, 150);
+    m_nameDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+        }
+        QLabel {
+            color: white;
+            font-size: 14px;
+        }
+        QLineEdit {
+            background-color: #D2B48C;
+            border: 1px solid #9b7b62;
+            border-radius: 5px;
+            padding: 5px;
+            color: #3d2b1f;
+            font-size: 14px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 1px solid #9b7b62;
+            border-radius: 5px;
+            padding: 5px 15px;
+            color: white;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+    )");
+
+    QVBoxLayout *layout = new QVBoxLayout(m_nameDialog);
+    QLabel *label = new QLabel("请输入线索名称:");
+    m_nameEdit = new QLineEdit();
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_confirmBtn = new QPushButton("确认");
+    m_cancelBtn = new QPushButton("取消");
+
+    btnLayout->addWidget(m_confirmBtn);
+    btnLayout->addWidget(m_cancelBtn);
+
+    layout->addWidget(label);
+    layout->addWidget(m_nameEdit);
+    layout->addLayout(btnLayout);
+
+    connect(m_confirmBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        QString clueName = m_nameEdit->text().trimmed();
+        if (clueName.isEmpty()) {
+            showToast("线索名称不能为空");
+            return;
+        }
+        if (DBManager::isClueNameExist(m_account, clueName)) {
+            showToast("线索名称已存在，请使用其他名称");
+            return;
+        }
+        addClueWithName(clueName, m_selectedImagePath);
+        m_nameDialog->close();
+    });
+
+    connect(m_cancelBtn, &QPushButton::clicked, m_nameDialog, &QDialog::close);
+
+    m_nameDialog->exec();
+}
+
+void LevelBase::addClueWithName(const QString &clueName, const QString &imagePath)
+{
+    int gridIndex = DBManager::getAvailableGridIndex(m_account);
+    if (gridIndex == -1) {
+        qDebug() << "背包已满";
+        if (m_nameDialog) m_nameDialog->close();
+        return;
+    }
+
+    if (DBManager::addBackpackClue(m_account, clueName, imagePath, gridIndex)) {
+        updateCellWithClue(gridIndex, clueName, imagePath);
+        qDebug() << "线索上传成功";
+    } else {
+        qDebug() << "上传失败，请重试";
+    }
+
+    if (m_nameDialog) m_nameDialog->close();
+}
+
+void LevelBase::showBackpackBox()
+{
+    if (!m_backpackBox) {
+        createBackpackBox();
+    }
+
+    m_backpackOverlay->raise();
+    m_backpackBox->raise();
+    m_backpackOverlay->show();
+
+    int boxWidth = m_backpackBox->width();
+    int boxHeight = m_backpackBox->height();
+    int startX = -boxWidth;
+    int startY = (height() - boxHeight) / 2;
+    int endX = 0;
+
+    m_backpackBox->move(startX, startY);
+    m_backpackBox->show();
+
+    QPropertyAnimation *anim = new QPropertyAnimation(m_backpackBox, "pos");
+    anim->setDuration(400);
+    anim->setStartValue(QPoint(startX, startY));
+    anim->setEndValue(QPoint(endX, startY));
+    anim->setEasingCurve(QEasingCurve::OutQuad);
+    anim->start(QPropertyAnimation::DeleteWhenStopped);
+}
+
+void LevelBase::hideBackpackBox()
+{
+    if (!m_backpackBox || !m_backpackBox->isVisible()) return;
+
+    int startX = m_backpackBox->x();
+    int startY = m_backpackBox->y();
+    int endX = -m_backpackBox->width();
+
+    QPropertyAnimation *anim = new QPropertyAnimation(m_backpackBox, "pos");
+    anim->setDuration(300);
+    anim->setStartValue(QPoint(startX, startY));
+    anim->setEndValue(QPoint(endX, startY));
+    anim->setEasingCurve(QEasingCurve::InQuad);
+
+    connect(anim, &QPropertyAnimation::finished, [this]() {
+        m_backpackBox->hide();
+        if (m_backpackOverlay) m_backpackOverlay->hide();
+    });
+
+    anim->start(QPropertyAnimation::DeleteWhenStopped);
+}
+
+void LevelBase::loadBackpackClues()
+{
+    QList<BackpackClue> clues = DBManager::getBackpackClues(m_account);
+
+    for (const BackpackClue &clue : qAsConst(clues)) {
+        updateCellWithClue(clue.gridIndex, clue.clueName, clue.imagePath);
+    }
+
+    qDebug() << "已加载" << clues.size() << "个背包线索";
+}
+
+void LevelBase::updateCellWithClue(int gridIndex, const QString &clueName, const QString &imagePath)
+{
+    if (!m_backpackCells.contains(gridIndex)) return;
+
+    QLabel *cell = m_backpackCells[gridIndex];
+
+    QPixmap pixmap(imagePath);
+    if (!pixmap.isNull()) {
+        QPixmap scaled = pixmap.scaled(45, 45, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        cell->setPixmap(scaled);
+    }
+
+    cell->setToolTip(clueName);
+
+    m_cellClueNames[cell] = clueName;
+    m_cellImagePaths[cell] = imagePath;
+}
+
+bool LevelBase::eventFilter(QObject *obj, QEvent *event)
+{
+    QLabel *cell = qobject_cast<QLabel*>(obj);
+    if (cell && m_cellClueNames.contains(cell)) {
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                playClickSound();
+                QString imagePath = m_cellImagePaths[cell];
+                QString clueName = m_cellClueNames[cell];
+                showEnlargedImage(imagePath, clueName);
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
+void LevelBase::showEnlargedImage(const QString &imagePath, const QString &clueName)
+{
+    QDialog *enlargeDialog = new QDialog(this);
+    enlargeDialog->setWindowTitle(clueName);
+    enlargeDialog->setModal(true);
+    enlargeDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #9b7b62;
+            border-radius: 15px;
+        }
+        QLabel {
+            background-color: #2c1e12;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 20px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+
+    int dialogWidth = 400;
+    int dialogHeight = 450;
+    enlargeDialog->setFixedSize(dialogWidth, dialogHeight);
+
+    QVBoxLayout *layout = new QVBoxLayout(enlargeDialog);
+    layout->setContentsMargins(20, 20, 20, 20);
+    layout->setSpacing(15);
+
+    QLabel *imageLabel = new QLabel();
+    imageLabel->setAlignment(Qt::AlignCenter);
+    imageLabel->setScaledContents(true);
+    imageLabel->setFixedSize(350, 350);
+    imageLabel->setStyleSheet("background-color: #2c1e12; border: 2px solid #9b7b62; border-radius: 10px;");
+
+    QPixmap pixmap(imagePath);
+    if (!pixmap.isNull()) {
+        QPixmap scaled = pixmap.scaled(340, 340, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        imageLabel->setPixmap(scaled);
+    } else {
+        imageLabel->setText("图片加载失败");
+        imageLabel->setStyleSheet("color: #e0d6c0; font-size: 14px;");
+    }
+
+    QLabel *nameLabel = new QLabel(QString("线索名称：%1").arg(clueName));
+    nameLabel->setAlignment(Qt::AlignCenter);
+    nameLabel->setStyleSheet("color: #e0d6c0; font-size: 14px; font-weight: bold;");
+
+    QPushButton *closeBtn = new QPushButton("关闭");
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeBtn, &QPushButton::clicked, enlargeDialog, &QDialog::accept);
+
+    layout->addWidget(imageLabel, 0, Qt::AlignCenter);
+    layout->addWidget(nameLabel);
+    layout->addWidget(closeBtn, 0, Qt::AlignCenter);
+
+    enlargeDialog->exec();
+    enlargeDialog->deleteLater();
+}
+
+void LevelBase::setupStoryArea()
+{
+    m_storyText = new QTextEdit(this);
+    m_storyText->setReadOnly(true);
+    m_storyText->setMinimumHeight(250);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_prevBtn = new QPushButton("回忆", this);
+    m_nextBtn = new QPushButton("继续", this);
+
+    m_prevBtn->setEnabled(false);
+    m_nextBtn->setEnabled(true);
+
+    connect(m_nextBtn, &QPushButton::clicked, this, &LevelBase::nextStory);
+    connect(m_prevBtn, &QPushButton::clicked, this, &LevelBase::prevStory);
+
+    btnLayout->addStretch();
+    btnLayout->addWidget(m_prevBtn);
+    btnLayout->addWidget(m_nextBtn);
+    btnLayout->addStretch();
+}
+
+void LevelBase::addStoryText(const QString &text)
+{
+    qDebug() << "添加剧情文本，长度:" << text.length();
+    m_stories.append(text);
+}
+
+void LevelBase::nextStory()
+{
+    qDebug() << "nextStory() - 当前索引:" << m_currentStoryIndex << "总数:" << m_stories.size();
+
+    if (m_currentStoryIndex < m_stories.size() - 1) {
+        m_currentStoryIndex++;
+        m_storyText->setText(m_stories[m_currentStoryIndex]);
+        qDebug() << "显示第" << m_currentStoryIndex << "段剧情";
+
+        m_prevBtn->setEnabled(m_currentStoryIndex > 0);
+        m_nextBtn->setEnabled(m_currentStoryIndex < m_stories.size() - 1);
+    }
+}
+
+void LevelBase::prevStory()
+{
+    if (m_currentStoryIndex > 0) {
+        m_currentStoryIndex--;
+        m_storyText->setText(m_stories[m_currentStoryIndex]);
+
+        m_prevBtn->setEnabled(m_currentStoryIndex > 0);
+        m_nextBtn->setEnabled(m_currentStoryIndex < m_stories.size() - 1);
+    }
+}
+
+void LevelBase::addProgress(int value)
+{
+    m_usefulCluesCount += value;
+    if (m_usefulCluesCount > m_maxUsefulClues) {
+        m_usefulCluesCount = m_maxUsefulClues;
+    }
+    m_progressBar->setValue(m_usefulCluesCount);
+
+    if (m_usefulCluesCount >= m_maxUsefulClues && !m_isDialogShowing) {
+        showLevelCompleteDialog();
+    }
+}
+
+void LevelBase::initStory()
+{
+    qDebug() << "LevelBase::initStory() - 使用默认空实现";
+}
+
+void LevelBase::onClueFound()
+{
+    addProgress(1);
+    qDebug() << "LevelBase::onClueFound() - 发现线索，进度+1";
+}
+
+void LevelBase::onCameraIdentify()
+{
+    playClickSound();
+
+    m_cameraDialog = new QDialog(this);
+    m_cameraDialog->setWindowTitle("实时甄别线索 - 将物品对准摄像头");
+    m_cameraDialog->setFixedSize(680, 580);
+    m_cameraDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #9b7b62;
+            border-radius: 15px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 16px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QLabel {
+            background-color: #2c1e12;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+        }
+    )");
+
+    m_cameraViewLabel = new QLabel(m_cameraDialog);
+    m_cameraViewLabel->setFixedSize(640, 480);
+    m_cameraViewLabel->setAlignment(Qt::AlignCenter);
+    m_cameraViewLabel->setScaledContents(true);
+    m_cameraViewLabel->setStyleSheet("background-color: #2c1e12; border: 2px solid #9b7b62; border-radius: 10px;");
+    m_cameraViewLabel->setText("正在启动摄像头...");
+
+    QLabel *resultLabel = new QLabel("等待识别...", m_cameraDialog);
+    resultLabel->setAlignment(Qt::AlignCenter);
+    resultLabel->setStyleSheet(R"(
+        QLabel {
+            color: #e0d6c0;
+            font-size: 14px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            padding: 5px;
+            margin: 5px;
+        }
+    )");
+    resultLabel->setFixedHeight(40);
+
+    QPushButton *cancelBtn = new QPushButton("取消", m_cameraDialog);
+    cancelBtn->setFixedSize(100, 40);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+
+    QVBoxLayout *layout = new QVBoxLayout(m_cameraDialog);
+    layout->addWidget(m_cameraViewLabel, 0, Qt::AlignCenter);
+    layout->addWidget(resultLabel);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+    btnLayout->addWidget(cancelBtn);
+    btnLayout->addStretch();
+    layout->addLayout(btnLayout);
+
+    m_cameraDialog->setLayout(layout);
+
+    startCamera();
+
+    connect(cancelBtn, &QPushButton::clicked, this, [this]() {
+        stopCamera();
+        m_cameraDialog->reject();
+    });
+    connect(m_cameraDialog, &QDialog::finished, this, [this]() {
+        stopCamera();
+    });
+
+    m_cameraDialog->exec();
+    m_cameraDialog->deleteLater();
+}
+
+void LevelBase::startCamera()
+{
+    m_isCameraRunning = true;
+
+    m_cap.open(0);
+    if (!m_cap.isOpened()) {
+        qDebug() << "无法打开摄像头";
+        m_cameraViewLabel->setText("无法打开摄像头\n\n请检查摄像头是否已连接");
+        m_isCameraRunning = false;
+        return;
+    }
+
+    m_cameraTimer = new QTimer(this);
+    connect(m_cameraTimer, &QTimer::timeout, this, &LevelBase::updateCameraFrame);
+    m_cameraTimer->start(33);
+
+    qDebug() << "摄像头启动成功";
+}
+
+void LevelBase::stopCamera()
+{
+    m_isCameraRunning = false;
+
+    if (m_cameraTimer) {
+        m_cameraTimer->stop();
+        delete m_cameraTimer;
+        m_cameraTimer = nullptr;
+    }
+
+    if (m_cap.isOpened()) {
+        m_cap.release();
+    }
+
+    qDebug() << "摄像头已停止";
+}
+
+// ========== 根据关卡ID获取类别数量 ==========
+int LevelBase::getClassCountByLevel(int levelId) const
+{
+    switch(levelId) {
+    case 1: return 2;
+    case 2: return 3;
+    case 3: return 3;
+    default: return 1;
+    }
+}
+
+// ========== 根据关卡ID和类别ID返回线索名称 ==========
+QString LevelBase::getClueNameByLevel(int levelId, int classId) const
+{
+    switch(levelId) {
+    case 1:
+        switch(classId) {
+        case 0: return "狗";
+        case 1: return "苹果";
+        default: return "有用线索";
+        }
+    case 2:
+        switch(classId) {
+        case 0: return "鸟";
+        case 1: return "风筝";
+        case 2: return "香蕉";
+        default: return "有用线索";
+        }
+    case 3:
+        switch(classId) {
+        case 0: return "刀";
+        case 1: return "钟";
+        case 2: return "花瓶";
+        default: return "有用线索";
+        }
+    default:
+        return "有用线索";
+    }
+}
+
+// ========== YOLO 识别函数（最终工作版本） ==========
+QString LevelBase::identifyClueWithResult(const cv::Mat &image)
+{
+    static QMap<int, cv::dnn::Net> modelCache;
+
+    if (m_modelPath.isEmpty()) {
+        qDebug() << "❌ 模型路径为空";
+        return "";
+    }
+    if (!QFile::exists(m_modelPath)) {
+        qDebug() << "❌ 模型不存在:" << m_modelPath;
+        return "";
+    }
+
+    if (!modelCache.contains(m_levelId)) {
+        cv::dnn::Net net = cv::dnn::readNetFromONNX(m_modelPath.toStdString());
+        if (net.empty()) {
+            qDebug() << "❌ 加载ONNX失败";
+            return "";
+        }
+        net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+        net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+        modelCache[m_levelId] = net;
+        qDebug() << "✅ 关卡" << m_levelId << "模型加载成功";
+    }
+
+    cv::dnn::Net &net = modelCache[m_levelId];
+    if (net.empty() || image.empty()) return "";
+
+    cv::Mat blob = cv::dnn::blobFromImage(image, 1/255.0, cv::Size(640,640), cv::Scalar(), true, false);
+    net.setInput(blob);
+    cv::Mat out;
+    net.forward(out);
+
+    int numClasses = getClassCountByLevel(m_levelId);
+    int nb = out.size[2];  // 8400
+
+    float confThresh = 0.25f;
+    float bestScore = 0;
+    int bestCls = -1;
+
+    const float *data = (float*)out.data;
+
+    // 使用您原来正确的索引方式（类别优先）
+    for (int cls = 0; cls < numClasses; cls++) {
+        for (int i = 0; i < nb; i++) {
+            float score = data[(4 + cls) * nb + i];
+            if (score > confThresh && score > bestScore) {
+                bestScore = score;
+                bestCls = cls;
+            }
+        }
+    }
+
+    qDebug() << "关卡" << m_levelId << "最佳识别 - 类别:" << bestCls << "置信度:" << bestScore;
+
+    if (bestCls >= 0 && bestCls < numClasses) {
+        QString name = getClueNameByLevel(m_levelId, bestCls);
+        qDebug() << "识别结果：" << name;
+        return name;
+    }
+
+    return "";
+}
+
+bool LevelBase::identifyClue(const cv::Mat &image)
+{
+    if(image.empty()) {
+        qDebug() << "图像为空，无法识别";
+        return false;
+    }
+    QString result = identifyClueWithResult(image);
+    bool success = !result.isEmpty();
+    if (success) {
+        qDebug() << "识别成功，线索名称:" << result;
+    } else {
+        qDebug() << "识别失败，未找到匹配的线索";
+    }
+    return success;
+}
+
+bool LevelBase::isTargetClue(const QString &clueName) const
+{
+    switch(m_levelId) {
+    case 1:
+        return (clueName == "狗" || clueName == "苹果");
+    case 2:
+        return (clueName == "鸟" || clueName == "风筝" || clueName == "香蕉");
+    case 3:
+        return (clueName == "刀" || clueName == "钟" || clueName == "花瓶");
+    default:
+        return false;
+    }
+}
+
+
+void LevelBase::saveCurrentFrameAndAdd(const QString &clueName)
+{
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmsszzz");
+    QString tempDir = QCoreApplication::applicationDirPath() + "/MyGameClues";
+    QDir dir(tempDir);
+    if (!dir.exists()) dir.mkpath(".");
+    QString filePath = tempDir + "/identified_" + timestamp + ".jpg";
+    cv::imwrite(filePath.toStdString(), m_currentFrame);
+    showNamingDialogForIdentify(filePath, clueName);
+}
+
+void LevelBase::updateCameraFrame()
+{
+    if (!m_cap.isOpened() || !m_isCameraRunning) {
+        return;
+    }
+
+    m_cap >> m_currentFrame;
+    if (m_currentFrame.empty()) {
+        return;
+    }
+
+    QString clueType = identifyClueWithResult(m_currentFrame);
+
+    if (!clueType.isEmpty()) {
+        cv::rectangle(m_currentFrame, cv::Rect(50, 50, 200, 200), cv::Scalar(0, 255, 0), 3);
+        cv::putText(m_currentFrame, clueType.toStdString(),
+                    cv::Point(60, 40), cv::FONT_HERSHEY_SIMPLEX,
+                    0.8, cv::Scalar(0, 255, 0), 2);
+
+        if (m_cameraDialog && m_cameraViewLabel) {
+            QMetaObject::invokeMethod(this, [this, clueType]() {
+                if (m_cameraDialog) {
+                    QList<QLabel*> labels = m_cameraDialog->findChildren<QLabel*>();
+                    for (QLabel *label : labels) {
+                        if (label->text() == "等待识别..." || label->text().startsWith("识别到:")) {
+                            label->setText(QString("识别到: %1").arg(clueType));
+                            label->setStyleSheet("color: #d4af37; font-size: 14px; font-weight: bold;");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        static bool alreadyAdded = false;
+        if (!alreadyAdded && isTargetClue(clueType)) {
+            alreadyAdded = true;
+
+            QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmsszzz");
+            QString tempDir = QCoreApplication::applicationDirPath() + "/MyGameClues";
+            QDir dir(tempDir);
+            if (!dir.exists()) dir.mkpath(".");
+            QString filePath = tempDir + "/identified_" + timestamp + ".jpg";
+            cv::imwrite(filePath.toStdString(), m_currentFrame);
+
+            showNamingDialogForIdentify(filePath, clueType);
+
+            QTimer::singleShot(3000, []() { alreadyAdded = false; });
+        }
+    } else {
+        if (m_cameraDialog) {
+            QMetaObject::invokeMethod(this, [this]() {
+                if (m_cameraDialog) {
+                    QList<QLabel*> labels = m_cameraDialog->findChildren<QLabel*>();
+                    for (QLabel *label : labels) {
+                        if (label->text().startsWith("识别到:")) {
+                            label->setText("等待识别...");
+                            label->setStyleSheet("color: #e0d6c0; font-size: 14px;");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    cv::Mat displayFrame;
+    cv::cvtColor(m_currentFrame, displayFrame, cv::COLOR_BGR2RGB);
+    QImage img(displayFrame.data, displayFrame.cols, displayFrame.rows,
+               displayFrame.step, QImage::Format_RGB888);
+    QPixmap pixmap = QPixmap::fromImage(img.scaled(m_cameraViewLabel->size(),
+                                                   Qt::KeepAspectRatio,
+                                                   Qt::SmoothTransformation));
+    if (m_cameraViewLabel) {
+        m_cameraViewLabel->setPixmap(pixmap);
+    }
+}
+
+void LevelBase::captureAndIdentify()
+{
+    if (!m_cap.isOpened() || m_currentFrame.empty()) {
+        qDebug() << "无法捕获当前帧";
+        return;
+    }
+
+    playClickSound();
+
+    cv::Mat frameCopy = m_currentFrame.clone();
+
+    bool isUseful = identifyClue(frameCopy);
+
+    if (isUseful) {
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmsszzz");
+        QString tempDir = QCoreApplication::applicationDirPath() + "/MyGameClues";
+        QDir dir(tempDir);
+        if (!dir.exists()) dir.mkpath(".");
+        QString filePath = tempDir + "/identified_" + timestamp + ".jpg";
+
+        cv::imwrite(filePath.toStdString(), frameCopy);
+
+        QString clueType = identifyClueWithResult(frameCopy);
+        showNamingDialogForIdentify(filePath, clueType);
+
+        stopCamera();
+        if (m_cameraDialog) {
+            m_cameraDialog->accept();
+        }
+    } else {
+        showIdentifyResult(false, "");
+    }
+}
+
+void LevelBase::showNamingDialogForIdentify(const QString &imagePath, const QString &clueType)
+{
+    m_selectedImagePath = imagePath;
+    m_currentClueType = clueType;
+
+    m_nameDialog = new QDialog(this);
+    m_nameDialog->setWindowTitle("线索甄别成功");
+    m_nameDialog->setFixedSize(300, 150);
+    m_nameDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+        }
+        QLabel {
+            color: white;
+            font-size: 14px;
+        }
+        QLineEdit {
+            background-color: #D2B48C;
+            border: 1px solid #9b7b62;
+            border-radius: 5px;
+            padding: 5px;
+            color: #3d2b1f;
+            font-size: 14px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 1px solid #9b7b62;
+            border-radius: 5px;
+            padding: 5px 15px;
+            color: white;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+    )");
+
+    QVBoxLayout *layout = new QVBoxLayout(m_nameDialog);
+    QLabel *label = new QLabel(QString("甄别成功！请为「%1」输入线索名称:").arg(clueType));
+    m_nameEdit = new QLineEdit();
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_confirmBtn = new QPushButton("确认");
+    m_cancelBtn = new QPushButton("取消");
+
+    btnLayout->addWidget(m_confirmBtn);
+    btnLayout->addWidget(m_cancelBtn);
+
+    layout->addWidget(label);
+    layout->addWidget(m_nameEdit);
+    layout->addLayout(btnLayout);
+
+    connect(m_confirmBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        QString clueName = m_nameEdit->text().trimmed();
+        if (clueName.isEmpty()) {
+            showToast("线索名称不能为空");
+            return;
+        }
+        if (DBManager::isClueNameExist(m_account, clueName)) {
+            showToast("线索名称已存在，请使用其他名称");
+            return;
+        }
+        bool added = addToUsefulClueBox(m_currentClueType, clueName, m_selectedImagePath);
+        addClueWithName(clueName, m_selectedImagePath);
+        if (added) {
+            showIdentifyResult(true, clueName);
+        }
+        m_nameDialog->close();
+    });
+
+    connect(m_cancelBtn, &QPushButton::clicked, m_nameDialog, &QDialog::close);
+
+    m_nameDialog->exec();
+}
+
+void LevelBase::showIdentifyResult(bool success, const QString &clueName)
+{
+    if (success) {
+        showToast(QString("甄别成功！找到有用线索：%1").arg(clueName));
+    } else {
+        showToast("甄别失败，这不是有用线索");
+    }
+}
+
+void LevelBase::setupBottomArea()
+{
+    qDebug() << "LevelBase::setupBottomArea() 开始";
+
+    QVBoxLayout *bottomLayout = qobject_cast<QVBoxLayout*>(m_bottomFrame->layout());
+    if (!bottomLayout) {
+        qDebug() << "错误：无法获取下半部分布局";
+        return;
+    }
+
+    QHBoxLayout *mainContentLayout = new QHBoxLayout();
+    mainContentLayout->setSpacing(20);
+
+    m_usefulClueFrame = new QFrame(m_bottomFrame);
+    m_usefulClueFrame->setFixedSize(280, 280);
+    m_usefulClueFrame->setStyleSheet(R"(
+        QFrame {
+            background-color: rgba(92, 63, 46, 150);
+            border: 2px solid #9b7b62;
+            border-radius: 15px;
+        }
+    )");
+
+    QVBoxLayout *frameLayout = new QVBoxLayout(m_usefulClueFrame);
+    frameLayout->setContentsMargins(15, 15, 15, 15);
+
+    QLabel *titleLabel = new QLabel("关键线索");
+    titleLabel->setStyleSheet(R"(
+        QLabel {
+            color: #e0d6c0;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: 'Microsoft YaHei', '华文行楷', 'Arial', sans-serif;
+            padding: 5px;
+        }
+    )");
+    titleLabel->setAlignment(Qt::AlignCenter);
+    frameLayout->addWidget(titleLabel);
+
+    m_usefulClueGrid = new QGridLayout();
+    m_usefulClueGrid->setContentsMargins(10, 10, 10, 10);
+    m_usefulClueGrid->setSpacing(12);
+
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            QLabel *cell = new QLabel();
+            cell->setFixedSize(70, 70);
+            cell->setStyleSheet(R"(
+                QLabel {
+                    background-color: rgba(210, 180, 140, 100);
+                    border: 2px solid #9b7b62;
+                    border-radius: 10px;
+                }
+                QLabel:hover {
+                    background-color: rgba(210, 180, 140, 180);
+                    border: 2px solid #d4af37;
+                }
+            )");
+            cell->setAlignment(Qt::AlignCenter);
+            cell->setScaledContents(true);
+            int index = row * 3 + col;
+            m_usefulClueCells[index] = cell;
+            m_usefulClueGrid->addWidget(cell, row, col);
+        }
+    }
+
+    frameLayout->addLayout(m_usefulClueGrid);
+
+    QVBoxLayout *buttonVerticalLayout = new QVBoxLayout();
+    buttonVerticalLayout->setSpacing(20);
+    buttonVerticalLayout->setAlignment(Qt::AlignCenter);
+
+    m_uploadIdentifyBtn = new QPushButton("上传甄别", m_bottomFrame);
+    m_uploadIdentifyBtn->setFixedSize(130, 50);
+    m_uploadIdentifyBtn->setCursor(Qt::PointingHandCursor);
+    m_uploadIdentifyBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 12px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 16px;
+            font-family: 'Microsoft YaHei', '华文行楷', 'Arial', sans-serif;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+            border-color: #d4af37;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+    connect(m_uploadIdentifyBtn, &QPushButton::clicked, this, &LevelBase::onUploadIdentify);
+
+    m_cameraIdentifyBtn = new QPushButton("摄像甄别", m_bottomFrame);
+    m_cameraIdentifyBtn->setFixedSize(130, 50);
+    m_cameraIdentifyBtn->setCursor(Qt::PointingHandCursor);
+    m_cameraIdentifyBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 12px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 16px;
+            font-family: 'Microsoft YaHei', '华文行楷', 'Arial', sans-serif;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+            border-color: #d4af37;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+    connect(m_cameraIdentifyBtn, &QPushButton::clicked, this, &LevelBase::onCameraIdentify);
+
+    buttonVerticalLayout->addStretch();
+    buttonVerticalLayout->addWidget(m_uploadIdentifyBtn);
+    buttonVerticalLayout->addWidget(m_cameraIdentifyBtn);
+    buttonVerticalLayout->addStretch();
+
+    mainContentLayout->addWidget(m_usefulClueFrame);
+    mainContentLayout->addLayout(buttonVerticalLayout);
+    mainContentLayout->addStretch();
+
+    bottomLayout->addLayout(mainContentLayout);
+    bottomLayout->addStretch();
+
+    qDebug() << "LevelBase::setupBottomArea() 结束";
+}
+
+void LevelBase::createUsefulClueBox()
+{
+    qDebug() << "LevelBase::createUsefulClueBox() 空实现";
+    m_usefulClueFrame = new QFrame(m_bottomFrame);
+    m_usefulClueFrame->setStyleSheet(R"(
+        QFrame {
+            background-color: rgba(92, 63, 46, 150);
+            border: 2px solid #9b7b62;
+            border-radius: 15px;
+            padding: 10px;
+        }
+    )");
+
+    QVBoxLayout *frameLayout = new QVBoxLayout(m_usefulClueFrame);
+    QLabel *titleLabel = new QLabel("关键线索");
+    titleLabel->setStyleSheet("color: #e0d6c0; font-size: 16px; font-weight: bold; text-align: center;");
+    frameLayout->addWidget(titleLabel);
+
+    m_usefulClueGrid = new QGridLayout();
+    m_usefulClueGrid->setContentsMargins(5, 5, 5, 5);
+    m_usefulClueGrid->setSpacing(5);
+    frameLayout->addLayout(m_usefulClueGrid);
+
+    for (int i = 0; i < m_maxUsefulClues; ++i) {
+        QLabel *cell = new QLabel();
+        cell->setFixedSize(80, 80);
+        cell->setStyleSheet(R"(
+            QLabel {
+                background-color: rgba(62, 43, 31, 180);
+                border: 1px solid #9b7b62;
+                border-radius: 8px;
+            }
+            QLabel:hover {
+                border: 2px solid #b59570;
+            }
+        )");
+        cell->setAlignment(Qt::AlignCenter);
+        m_usefulClueCells[i] = cell;
+        m_usefulClueGrid->addWidget(cell, 0, i);
+    }
+
+    QVBoxLayout *bottomLayout = qobject_cast<QVBoxLayout*>(m_bottomFrame->layout());
+    if (bottomLayout) {
+        bottomLayout->addWidget(m_usefulClueFrame);
+    }
+}
+
+void LevelBase::createIdentifyButtons()
+{
+    qDebug() << "LevelBase::createIdentifyButtons() 空实现";
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->setContentsMargins(10, 10, 10, 10);
+    btnLayout->setSpacing(20);
+
+    m_uploadIdentifyBtn = new QPushButton("上传甄别", m_bottomFrame);
+    m_uploadIdentifyBtn->setFixedSize(120, 40);
+    m_uploadIdentifyBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_uploadIdentifyBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        onUploadIdentify();
+    });
+
+    m_cameraIdentifyBtn = new QPushButton("摄像头甄别", m_bottomFrame);
+    m_cameraIdentifyBtn->setFixedSize(120, 40);
+    m_cameraIdentifyBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_cameraIdentifyBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        onCameraIdentify();
+    });
+
+    btnLayout->addStretch();
+    btnLayout->addWidget(m_uploadIdentifyBtn);
+    btnLayout->addWidget(m_cameraIdentifyBtn);
+    btnLayout->addStretch();
+
+    QVBoxLayout *bottomLayout = qobject_cast<QVBoxLayout*>(m_bottomFrame->layout());
+    if (bottomLayout) {
+        bottomLayout->addLayout(btnLayout);
+    }
+}
+
+void LevelBase::onUploadIdentify()
+{
+    qDebug() << "LevelBase::onUploadIdentify() 开始";
+    playClickSound();
+
+    if (m_cellClueNames.isEmpty()) {
+        showToast("背包中没有线索可供甄别");
+        return;
+    }
+
+    QDialog *selectDialog = new QDialog(this);
+    selectDialog->setWindowTitle("选择线索进行甄别");
+    selectDialog->setFixedSize(400, 500);
+    selectDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #9b7b62;
+            border-radius: 15px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px;
+            color: #e0d6c0;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QScrollArea {
+            border: none;
+            background-color: transparent;
+        }
+    )");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(selectDialog);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
+    mainLayout->setSpacing(15);
+
+    QLabel *titleLabel = new QLabel("请选择要甄别的线索:");
+    titleLabel->setStyleSheet("color: #e0d6c0; font-size: 16px; font-weight: bold;");
+    titleLabel->setAlignment(Qt::AlignCenter);
+    mainLayout->addWidget(titleLabel);
+
+    QScrollArea *scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("background-color: transparent; border: none;");
+
+    QWidget *scrollWidget = new QWidget();
+    QGridLayout *gridLayout = new QGridLayout(scrollWidget);
+    gridLayout->setSpacing(10);
+    gridLayout->setContentsMargins(10, 10, 10, 10);
+
+    int row = 0, col = 0;
+    for (auto it = m_cellClueNames.constBegin(); it != m_cellClueNames.constEnd(); ++it) {
+        QLabel *cell = it.key();
+        QString clueName = it.value();
+        QString imagePath = m_cellImagePaths[cell];
+
+        QPushButton *clueBtn = new QPushButton();
+        clueBtn->setFixedSize(100, 100);
+        clueBtn->setCursor(Qt::PointingHandCursor);
+        clueBtn->setStyleSheet(R"(
+            QPushButton {
+                background-color: rgba(92, 63, 46, 180);
+                border: 2px solid #9b7b62;
+                border-radius: 10px;
+                color: #e0d6c0;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: rgba(155, 123, 98, 180);
+                border-color: #d4af37;
+            }
+        )");
+
+        QVBoxLayout *btnLayout = new QVBoxLayout(clueBtn);
+        btnLayout->setContentsMargins(5, 5, 5, 5);
+        btnLayout->setSpacing(5);
+
+        QLabel *imgLabel = new QLabel();
+        imgLabel->setFixedSize(70, 70);
+        imgLabel->setAlignment(Qt::AlignCenter);
+        imgLabel->setScaledContents(true);
+
+        QPixmap pixmap(imagePath);
+        if (!pixmap.isNull()) {
+            imgLabel->setPixmap(pixmap.scaled(70, 70, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        } else {
+            imgLabel->setText("📷");
+            imgLabel->setStyleSheet("font-size: 30px;");
+        }
+        btnLayout->addWidget(imgLabel, 0, Qt::AlignCenter);
+
+        QLabel *nameLabel = new QLabel(clueName);
+        nameLabel->setAlignment(Qt::AlignCenter);
+        nameLabel->setStyleSheet("color: #e0d6c0; font-size: 12px;");
+        btnLayout->addWidget(nameLabel);
+
+        connect(clueBtn, &QPushButton::clicked, this, [this, clueName, imagePath, selectDialog]() {
+            selectDialog->accept();
+
+            cv::Mat image = cv::imread(imagePath.toStdString());
+            if (image.empty()) {
+                qDebug() << "无法读取图片：" << imagePath;
+                showToast("无法读取线索图片");
+                return;
+            }
+
+            QString clueType = identifyClueWithResult(image);
+            if (!clueType.isEmpty()) {
+                bool added = addToUsefulClueBox(clueType, clueName, imagePath);
+                if (added) {
+                    showIdentifyResult(true, clueName);
+                }
+            } else {
+                showIdentifyResult(false);
+            }
+        });
+
+        gridLayout->addWidget(clueBtn, row, col);
+        col++;
+        if (col >= 3) {
+            col = 0;
+            row++;
+        }
+    }
+
+    scrollWidget->setLayout(gridLayout);
+    scrollArea->setWidget(scrollWidget);
+    mainLayout->addWidget(scrollArea);
+
+    QPushButton *cancelBtn = new QPushButton("取消");
+    cancelBtn->setFixedSize(100, 35);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    cancelBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 8px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+    )");
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+    btnLayout->addWidget(cancelBtn);
+    btnLayout->addStretch();
+    mainLayout->addLayout(btnLayout);
+
+    connect(cancelBtn, &QPushButton::clicked, selectDialog, &QDialog::reject);
+
+    selectDialog->exec();
+    selectDialog->deleteLater();
+}
+
+bool LevelBase::addToUsefulClueBox(const QString &clueType, const QString &clueName, const QString &imagePath)
+{
+    qDebug() << "添加有用线索 - 类型:" << clueType << "名称:" << clueName;
+
+    for (int i = 0; i < m_usefulClueIndex; i++) {
+        if (m_usefulClueCells.contains(i)) {
+            QLabel *existingCell = m_usefulClueCells[i];
+            QString existingType = existingCell->property("clueType").toString();
+            if (existingType == clueType) {
+                showToast(QString("已有同类线索「%1」，不能重复添加！").arg(clueType));
+                qDebug() << "物体类型" << clueType << "已经存在，不重复添加";
+                return false;
+            }
+        }
+    }
+
+    if (m_usefulClueIndex >= 9) {
+        showToast("有用线索框已满");
+        qDebug() << "有用线索框已满";
+        return false;
+    }
+
+    if (m_usefulClueCells.contains(m_usefulClueIndex)) {
+        QLabel *cell = m_usefulClueCells[m_usefulClueIndex];
+
+        QPixmap pixmap(imagePath);
+        if (!pixmap.isNull()) {
+            QPixmap scaled = pixmap.scaled(45, 45, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            cell->setPixmap(scaled);
+        }
+
+        cell->setToolTip(clueName);
+        cell->setProperty("clueType", clueType);
+        m_usefulClueIndex++;
+
+        addProgress(1);
+        showToast(QString("✓ 获得有用线索：%1").arg(clueName));
+        qDebug() << "有用线索添加成功，当前进度:" << m_usefulCluesCount;
+        return true;
+    }
+
+    return false;
+}
+
+// ========== 嫌犯笔记本相关函数实现 ==========
+
+void LevelBase::createNotebookButton()
+{
+    m_notebookBtn = new QPushButton(this);
+    m_notebookBtn->setFixedSize(90, 90);
+    m_notebookBtn->setCursor(Qt::PointingHandCursor);
+    m_notebookBtn->setFlat(true);
+    m_notebookBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            border-radius: 45px;
+            padding: 0px;
+        }
+        QPushButton:hover {
+            background-color: rgba(155, 123, 98, 0.3);
+        }
+        QPushButton:pressed {
+            background-color: rgba(92, 63, 46, 0.5);
+        }
+    )");
+
+    QPixmap notebookPixmap(":/res/notebook.jpg");
+    if (!notebookPixmap.isNull()) {
+        QPixmap rounded(notebookPixmap.size());
+        rounded.fill(Qt::transparent);
+        QPainter painter(&rounded);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QBrush(notebookPixmap.scaled(notebookPixmap.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)));
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(rounded.rect());
+        painter.end();
+        m_notebookBtn->setIcon(QIcon(rounded));
+        m_notebookBtn->setIconSize(QSize(75, 75));
+    } else {
+        qDebug() << "笔记本图标加载失败，使用文字替代";
+        m_notebookBtn->setText("📓");
+        m_notebookBtn->setFont(QFont("Arial", 36));
+        m_notebookBtn->setStyleSheet(R"(
+            QPushButton {
+                background-color: rgba(92, 63, 46, 150);
+                border: 2px solid #9b7b62;
+                border-radius: 45px;
+                color: #e0d6c0;
+                font-size: 36px;
+            }
+            QPushButton:hover {
+                background-color: rgba(155, 123, 98, 0.5);
+            }
+        )");
+    }
+
+    connect(m_notebookBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        showNotebookBox();
+    });
+
+    m_notebookBtn->setParent(this);
+    m_notebookBtn->move(20 + 90 + 15, height() - 110);
+}
+
+void LevelBase::createNotebookBox()
+{
+    if (m_notebookBox) return;
+
+    if (!m_notebookOverlay) {
+        m_notebookOverlay = new QWidget(this);
+        m_notebookOverlay->setGeometry(rect());
+        m_notebookOverlay->setStyleSheet("background-color: rgba(0, 0, 0, 120);");
+        m_notebookOverlay->lower();
+        m_notebookOverlay->hide();
+    }
+
+    m_notebookBox = new QWidget(this);
+    m_notebookBox->setFixedSize(400, 500);
+    m_notebookBox->setStyleSheet(R"(
+        QWidget {
+            background-color: rgb(245, 235, 210);
+            border: 3px solid #9b7b62;
+            border-radius: 15px;
+        }
+        QTextEdit {
+            background-color: rgb(255, 250, 225);
+            border: 1px solid #9b7b62;
+            border-radius: 10px;
+            font-family: 'Microsoft YaHei', 'Arial', sans-serif;
+            font-size: 14px;
+            padding: 10px;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 8px;
+            padding: 5px 15px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+    )");
+    m_notebookBox->hide();
+
+    QLabel *titleLabel = new QLabel("推理笔记本", m_notebookBox);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet(R"(
+        QLabel {
+            font-size: 17px;
+            font-weight: bold;
+            font-family: '华文行楷', 'Microsoft YaHei', 'Arial', sans-serif;
+            color: #5c3f2e;
+            padding: 10px;
+        }
+    )");
+    titleLabel->setGeometry(0, 10, 400, 40);
+
+    m_notebookCloseBtn = new QPushButton("×", m_notebookBox);
+    m_notebookCloseBtn->setFixedSize(30, 30);
+    m_notebookCloseBtn->setCursor(Qt::PointingHandCursor);
+    m_notebookCloseBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: transparent;
+            border: none;
+            border-radius: 15px;
+            color: #5c3f2e;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: rgba(155, 123, 98, 0.5);
+        }
+    )");
+    m_notebookCloseBtn->move(360, 10);
+    connect(m_notebookCloseBtn, &QPushButton::clicked, this, [this]() {
+        playClickSound();
+        hideNotebookBox();
+    });
+
+    m_notebookText = new QTextEdit(m_notebookBox);
+    m_notebookText->setGeometry(20, 60, 360, 380);
+    m_notebookText->setPlaceholderText("在这里记录你的推理和线索...");
+
+    QString savedNote = DBManager::getNotebook(m_account, m_levelId);
+    if (!savedNote.isEmpty()) {
+        m_notebookText->setPlainText(savedNote);
+    }
+
+    m_notebookSaveBtn = new QPushButton("保存", m_notebookBox);
+    m_notebookSaveBtn->setFixedSize(80, 35);
+    m_notebookSaveBtn->setCursor(Qt::PointingHandCursor);
+    m_notebookSaveBtn->move(160, 455);
+    connect(m_notebookSaveBtn, &QPushButton::clicked, this, &LevelBase::onNotebookSave);
+}
+
+void LevelBase::showNotebookBox()
+{
+    if (!m_notebookBox) {
+        createNotebookBox();
+    }
+
+    m_isNotebookOpen = true;
+    setInteractionEnabled(false);
+
+    m_notebookOverlay->raise();
+    m_notebookBox->raise();
+    m_notebookOverlay->show();
+
+    int boxWidth = m_notebookBox->width();
+    int boxHeight = m_notebookBox->height();
+    int startX = width();
+    int startY = (height() - boxHeight) / 2;
+    int endX = width() - boxWidth - 10;
+
+    m_notebookBox->move(startX, startY);
+    m_notebookBox->show();
+
+    QPropertyAnimation *anim = new QPropertyAnimation(m_notebookBox, "pos");
+    anim->setDuration(400);
+    anim->setStartValue(QPoint(startX, startY));
+    anim->setEndValue(QPoint(endX, startY));
+    anim->setEasingCurve(QEasingCurve::OutQuad);
+    connect(anim, &QPropertyAnimation::finished, this, [this]() {
+        m_notebookText->setFocus();
+    });
+    anim->start(QPropertyAnimation::DeleteWhenStopped);
+}
+
+void LevelBase::hideNotebookBox()
+{
+    if (!m_notebookBox || !m_notebookBox->isVisible()) return;
+
+    int startX = m_notebookBox->x();
+    int startY = m_notebookBox->y();
+    int endX = width();
+
+    QPropertyAnimation *anim = new QPropertyAnimation(m_notebookBox, "pos");
+    anim->setDuration(300);
+    anim->setStartValue(QPoint(startX, startY));
+    anim->setEndValue(QPoint(endX, startY));
+    anim->setEasingCurve(QEasingCurve::InQuad);
+
+    connect(anim, &QPropertyAnimation::finished, [this]() {
+        m_notebookBox->hide();
+        if (m_notebookOverlay) m_notebookOverlay->hide();
+        m_isNotebookOpen = false;
+        setInteractionEnabled(true);
+    });
+
+    anim->start(QPropertyAnimation::DeleteWhenStopped);
+}
+
+void LevelBase::onNotebookSave()
+{
+    playClickSound();
+
+    QString noteContent = m_notebookText->toPlainText();
+
+    if (DBManager::saveNotebook(m_account, m_levelId, noteContent)) {
+        qDebug() << "笔记本保存成功";
+    } else {
+        qDebug() << "笔记本保存失败";
+    }
+
+    hideNotebookBox();
+}
+
+void LevelBase::setInteractionEnabled(bool enabled)
+{
+    m_backBtn->setEnabled(enabled);
+    m_nextBtn->setEnabled(enabled);
+    m_prevBtn->setEnabled(enabled);
+    m_backpackBtn->setEnabled(enabled);
+    m_notebookBtn->setEnabled(enabled);
+    m_uploadIdentifyBtn->setEnabled(enabled);
+    m_cameraIdentifyBtn->setEnabled(enabled);
+
+    if (m_uploadBtn) m_uploadBtn->setEnabled(enabled);
+    if (m_captureBtn) m_captureBtn->setEnabled(enabled);
+    if (m_backpackCloseBtn) m_backpackCloseBtn->setEnabled(enabled);
+}
+
+// ========== 人物对话系统实现 ==========
+
+void LevelBase::showCharacterDialog(const QString &avatarPath, const QString &name, const QStringList &dialogues)
+{
+    if (m_isDialogShowing) {
+        hideCharacterDialog();
+    }
+
+    m_currentDialogues = dialogues;
+    m_currentDialogIndex = 0;
+    m_isDialogShowing = true;
+
+    setDialogInteractionEnabled(false);
+
+    int dialogWidth = width() - 20;
+    int dialogHeight = 180;
+    int avatarSize = 80;
+    int avatarAreaWidth = 100;
+    int textAreaX = avatarAreaWidth + 10;
+
+    if (dialogWidth > 480) {
+        dialogWidth = 480;
+    }
+    if (dialogWidth < 300) {
+        dialogWidth = 300;
+        avatarSize = 60;
+        avatarAreaWidth = 80;
+        textAreaX = avatarAreaWidth + 10;
+    }
+
+    int textAreaWidth = dialogWidth - textAreaX - 20;
+
+    m_dialogWidget = new QWidget(this);
+    m_dialogWidget->setFixedSize(dialogWidth, dialogHeight);
+    m_dialogWidget->setStyleSheet(R"(
+        QWidget {
+            background-color: rgba(62, 43, 31, 220);
+            border: 3px solid #9b7b62;
+            border-radius: 10px;
+        }
+    )");
+
+    int x = 10;
+    int y = height() - dialogHeight - 10;
+    m_dialogWidget->move(x, y);
+
+    QWidget *avatarWidget = new QWidget(m_dialogWidget);
+    avatarWidget->setFixedSize(avatarAreaWidth, avatarSize + 30);
+    avatarWidget->move(10, (dialogHeight - (avatarSize + 30)) / 2);
+    avatarWidget->setStyleSheet("background-color: rgba(0, 0, 0, 0);");
+
+    m_avatarLabel = new QLabel(avatarWidget);
+    m_avatarLabel->setFixedSize(avatarSize, avatarSize);
+    m_avatarLabel->move((avatarAreaWidth - avatarSize) / 2, 0);
+    m_avatarLabel->setAlignment(Qt::AlignCenter);
+    m_avatarLabel->setStyleSheet(R"(
+        QLabel {
+            background-color: #5c3f2e;
+            border: 2px solid #9b7b62;
+            border-radius: 5px;
+        }
+    )");
+
+    QPixmap avatarPix(avatarPath);
+    if (!avatarPix.isNull()) {
+        m_avatarLabel->setPixmap(avatarPix.scaled(avatarSize - 4, avatarSize - 4, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        m_avatarLabel->setText("👤");
+        m_avatarLabel->setStyleSheet("font-size: 40px; background-color: #5c3f2e; border: 2px solid #9b7b62; border-radius: 5px;");
+    }
+
+    m_nameLabel = new QLabel(name, avatarWidget);
+    m_nameLabel->setFixedSize(avatarAreaWidth, 25);
+    m_nameLabel->move(0, avatarSize + 5);
+    m_nameLabel->setAlignment(Qt::AlignCenter);
+    m_nameLabel->setStyleSheet(R"(
+        QLabel {
+            color: #d4af37;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Microsoft YaHei', 'Arial', sans-serif;
+            background-color: rgba(0, 0, 0, 0);
+        }
+    )");
+
+    m_dialogText = new QTextEdit(m_dialogWidget);
+    m_dialogText->setGeometry(textAreaX, 15, textAreaWidth, dialogHeight - 50);
+    m_dialogText->setReadOnly(true);
+    m_dialogText->setStyleSheet(R"(
+        QTextEdit {
+            background-color: rgba(210, 180, 140, 200);
+            border: 2px solid #9b7b62;
+            border-radius: 8px;
+            color: #2c1e12;
+            font-size: 20px;
+            font-family: 'STXingkai', 'Microsoft YaHei', 'Arial', sans-serif;
+            padding: 8px;
+        }
+    )");
+
+    m_dialogContinueBtn = new QPushButton("继续", m_dialogWidget);
+    m_dialogContinueBtn->setFixedSize(70, 28);
+    m_dialogContinueBtn->move(dialogWidth - 80, dialogHeight - 38);
+    m_dialogContinueBtn->setCursor(Qt::PointingHandCursor);
+    m_dialogContinueBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 6px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+    connect(m_dialogContinueBtn, &QPushButton::clicked, this, &LevelBase::onDialogContinue);
+
+    m_dialogWidget->show();
+    m_dialogWidget->raise();
+
+    m_typewriterTimer = new QTimer(this);
+    connect(m_typewriterTimer, &QTimer::timeout, this, &LevelBase::updateDialogText);
+
+    startCurrentDialog();
+}
+
+void LevelBase::hideCharacterDialog()
+{
+    if (m_typewriterTimer) {
+        m_typewriterTimer->stop();
+        delete m_typewriterTimer;
+        m_typewriterTimer = nullptr;
+    }
+
+    if (m_dialogWidget) {
+        m_dialogWidget->hide();
+        m_dialogWidget->deleteLater();
+        m_dialogWidget = nullptr;
+    }
+
+    m_avatarLabel = nullptr;
+    m_nameLabel = nullptr;
+    m_dialogText = nullptr;
+    m_dialogContinueBtn = nullptr;
+    m_isDialogShowing = false;
+
+    setDialogInteractionEnabled(true);
+}
+
+void LevelBase::startCurrentDialog()
+{
+    if (m_currentDialogIndex >= m_currentDialogues.size()) {
+        hideCharacterDialog();
+        return;
+    }
+
+    m_currentTargetText = m_currentDialogues[m_currentDialogIndex];
+    m_currentDisplayText = "";
+    m_typewriterPos = 0;
+
+    m_dialogText->clear();
+
+    if (m_typewriterTimer) {
+        m_typewriterTimer->stop();
+    }
+    m_typewriterTimer->start(50);
+}
+
+void LevelBase::updateDialogText()
+{
+    if (m_typewriterPos < m_currentTargetText.length()) {
+        m_currentDisplayText += m_currentTargetText.at(m_typewriterPos);
+        m_dialogText->setPlainText(m_currentDisplayText);
+
+        QTextCursor cursor = m_dialogText->textCursor();
+        cursor.movePosition(QTextCursor::End);
+        m_dialogText->setTextCursor(cursor);
+
+        m_typewriterPos++;
+    } else {
+        m_typewriterTimer->stop();
+
+        if (m_currentDialogIndex < m_currentDialogues.size() - 1) {
+            m_dialogContinueBtn->setText("继续");
+        } else {
+            m_dialogContinueBtn->setText("完成");
+        }
+    }
+}
+
+void LevelBase::onDialogContinue()
+{
+    playClickSound();
+
+    if (m_typewriterTimer && m_typewriterTimer->isActive()) {
+        m_typewriterTimer->stop();
+        m_dialogText->setPlainText(m_currentTargetText);
+        m_typewriterPos = m_currentTargetText.length();
+
+        if (m_currentDialogIndex < m_currentDialogues.size() - 1) {
+            m_dialogContinueBtn->setText("继续");
+        } else {
+            m_dialogContinueBtn->setText("完成");
+        }
+        return;
+    }
+
+    m_currentDialogIndex++;
+    startCurrentDialog();
+}
+
+void LevelBase::setDialogInteractionEnabled(bool enabled)
+{
+    m_backBtn->setEnabled(enabled);
+    m_backpackBtn->setEnabled(enabled);
+    m_notebookBtn->setEnabled(enabled);
+    m_uploadIdentifyBtn->setEnabled(enabled);
+    m_cameraIdentifyBtn->setEnabled(enabled);
+
+    if (m_uploadBtn) m_uploadBtn->setEnabled(enabled);
+    if (m_captureBtn) m_captureBtn->setEnabled(enabled);
+    if (m_backpackCloseBtn) m_backpackCloseBtn->setEnabled(enabled);
+
+    if (m_prevBtn) {
+        m_prevBtn->setEnabled(enabled && m_currentStoryIndex > 0);
+    }
+    if (m_nextBtn) {
+        m_nextBtn->setEnabled(enabled && m_currentStoryIndex < m_stories.size() - 1);
+    }
+}
+
+void LevelBase::showLevelCompleteDialog()
+{
+    // 暂停摄像头（如果正在运行）
+    if (m_isCameraRunning) {
+        stopCamera();
+        if (m_cameraDialog) {
+            m_cameraDialog->reject();
+        }
+    }
+
+    // 创建遮罩（直接作为关卡窗口的子控件）
+    QWidget *completeOverlay = new QWidget(this);
+    completeOverlay->setGeometry(0, 0, this->width(), this->height());
+    completeOverlay->setStyleSheet("background-color: rgba(0, 0, 0, 150);");
+    completeOverlay->show();
+    completeOverlay->raise();
+
+    // 通关弹窗
+    QDialog *completeDialog = new QDialog(this);
+    completeDialog->setWindowTitle("恭喜");
+    completeDialog->setModal(true);
+    completeDialog->setFixedSize(350, 250);
+    completeDialog->setWindowFlags(Qt::FramelessWindowHint);
+    completeDialog->setStyleSheet(R"(
+        QDialog {
+            background-color: rgb(62, 43, 31);
+            border: 3px solid #d4af37;
+            border-radius: 20px;
+        }
+        QLabel {
+            color: #d4af37;
+            font-size: 24px;
+            font-weight: bold;
+            font-family: '华文行楷', 'Microsoft YaHei', 'Arial', sans-serif;
+        }
+        QPushButton {
+            background-color: #7a5a44;
+            border: 2px solid #9b7b62;
+            border-radius: 10px;
+            padding: 8px 20px;
+            color: #e0d6c0;
+            font-weight: bold;
+            font-size: 14px;
+            min-width: 100px;
+        }
+        QPushButton:hover {
+            background-color: #9b7b62;
+            border-color: #d4af37;
+        }
+        QPushButton:pressed {
+            background-color: #5c3f2e;
+        }
+    )");
+
+    // 布局
+    QVBoxLayout *layout = new QVBoxLayout(completeDialog);
+    layout->setContentsMargins(20, 20, 20, 20);
+    layout->setSpacing(20);
+
+    // 恭喜图标和文字
+    QLabel *iconLabel = new QLabel("🎉");
+    iconLabel->setAlignment(Qt::AlignCenter);
+    iconLabel->setStyleSheet("font-size: 48px; background: transparent;");
+    layout->addWidget(iconLabel);
+
+    QLabel *titleLabel = new QLabel("恭喜你破案了！");
+    titleLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(titleLabel);
+
+    QLabel *subLabel = new QLabel(QString("成功收集 %1 个有用线索").arg(m_usefulCluesCount));
+    subLabel->setAlignment(Qt::AlignCenter);
+    subLabel->setStyleSheet("font-size: 14px; color: #e0d6c0;");
+    layout->addWidget(subLabel);
+
+    // 按钮布局 - 只保留返回按钮并居中
+    QPushButton *backBtn = new QPushButton("返回主页");
+    backBtn->setCursor(Qt::PointingHandCursor);
+    backBtn->setFixedWidth(150);  // 设置固定宽度，更好看
+
+    // 将按钮添加到布局中，居中显示
+    layout->addWidget(backBtn, 0, Qt::AlignCenter);
+
+    // 连接返回按钮
+    connect(backBtn, &QPushButton::clicked, this, [this, completeDialog, completeOverlay]() {
+        playClickSound();
+
+        // 先标记关卡完成（但不自动进入下一关）
+        emit levelCompleted(m_levelId);
+
+        // 关闭弹窗
+        completeDialog->accept();
+        completeOverlay->deleteLater();
+
+        // 延迟关闭当前关卡窗口，返回主页
+        QTimer::singleShot(200, this, [this]() {
+            emit backToMain();
+        });
+    });
+
+    // 强制居中
+    completeDialog->move(
+        (this->width() - completeDialog->width()) / 2,
+        (this->height() - completeDialog->height()) / 2
+        );
+
+    // 确保显示在最上层
+    completeDialog->show();
+    completeDialog->raise();
+
+    // 弹窗关闭时删除遮罩
+    connect(completeDialog, &QDialog::finished, completeOverlay, &QWidget::deleteLater);
+}
+#include "Level1.h"
+#include <QDebug>
+
+Level1::Level1(const QString &account, QWidget *parent)
+    : LevelBase(1, account, parent)
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("新手教程");
+    qDebug() << "===== Level1 构造函数开始 =====";
+
+    // 设置关卡1的模型路径（训练好后修改这里）
+    m_modelPath ="E:/YOLO/ultralytics-8.3.163/runs/detect/my_yolo_models/model1/my_model2.onnx";  // TODO: 改成您的实际路径
+
+    // 新手教程需要找到2个有用线索
+    m_maxUsefulClues = 2;
+
+    // 确保进度条存在
+    if (m_progressBar) {
+        m_progressBar->setRange(0, m_maxUsefulClues);
+        m_progressBar->setValue(0);
+        qDebug() << "进度条设置完成";
+    } else {
+        qDebug() << "错误：m_progressBar 为空";
+    }
+
+    initStory();
+
+    qDebug() << "===== Level1 构造函数结束 =====";
+}
+
+void Level1::initStory()
+{
+    qDebug() << "===== Level1::initStory() 开始 =====";
+    qDebug() << "m_storyText 是否为空:" << (m_storyText == nullptr);
+
+    if (m_storyText == nullptr) {
+        qDebug() << "错误：m_storyText 为空！";
+        return;
+    }
+
+    m_stories.clear();
+
+    // 在剧情中显示人物对话
+    QStringList dialogues;
+    dialogues << "这不是咱们新来的菜鸟嘛！"
+              << "我叫“X”，以后你就跟着我混了！"
+              << "我先教你一些在这个侦探事务所需要的基本要领！";
+    showCharacterDialog(":/res/le1_atr_1.jpg", "X侦探", dialogues);
+
+    addStoryText(
+        "【新手教程】\n\n"
+        "欢迎来到侦探事务所！\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    addStoryText(
+        "作为侦探，需要有收集线索的能力\n\n"
+        "你在左下角的背包里，可以存放自己的线索\n\n"
+        "你可以选择上传线索，也可以选择拍摄线索\n\n"
+        "但可别忘了给他们命名哟\n\n"
+        "试一试吧\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    addStoryText(
+        "同样你也应该具备基本的记录细节的能力\n\n"
+        "背包旁边有笔记本，你可以记录案件中的细节\n\n"
+        "从而能够找到更加有用的线索\n\n"
+        "试一试吧\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    addStoryText(
+        "你背包里的所有线索并不一定对破案有帮助\n\n"
+        "只有有用的线索才能帮助你破案\n\n"
+        "所以你需要进行甄别\n\n"
+        "有效线索会被上传到有效线索框\n\n"
+        "背包里有一张狗的照片\n\n"
+        "将狗的照片上传甄别一下吧\n\n"
+        "试一试上传甄别线索的功能吧\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    addStoryText(
+        "当然你也可以进行摄像甄别\n\n"
+        "点击摄像甄别之后\n\n"
+        "你可以将你认为对破案有帮助的线索进行识别\n\n"
+        "识别成功的有效线索\n\n"
+        "同样会被上传到有效线索框\n\n"
+        "请你准备一张苹果图片/苹果"
+        "用摄像甄别功能对准你的苹果图片/苹果"
+        "试一试摄像甄别线索的功能吧\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    addStoryText(
+        "后续出现的案件\n\n"
+        "需要你自己在剧情中寻找线索\n\n"
+        "来推断关键线索"
+        );
+    addStoryText(
+        "每获得一个关键线索\n\n"
+        "顶部的进度条就会增加\n\n"
+        "到达100%时，我们就能破案了\n\n"
+        "点击「继续」进入下一步。"
+        );
+
+    qDebug() << "添加了" << m_stories.size() << "段剧情";
+
+    if (!m_stories.isEmpty()) {
+        QString firstStory = m_stories[0];
+        qDebug() << "第一段剧情内容:" << firstStory;
+        m_storyText->setPlainText(firstStory);
+        m_storyText->update();
+        qDebug() << "显示第一段剧情完成";
+    } else {
+        qDebug() << "错误：没有剧情文本！";
+        m_storyText->setPlainText("剧情加载失败，请重新进入关卡。");
+    }
+
+    qDebug() << "===== Level1::initStory() 结束 =====";
+}
+
+void Level1::onClueFound()
+{
+    addProgress(1);
+}
+
+void Level1::checkClue(const QString &clueName)
+{
+    QStringList usefulClues = {"狗", "苹果"};
+    if (usefulClues.contains(clueName)) {
+        onClueFound();
+    }
+}
+#include "Level2.h"
+#include <QDebug>
+
+Level2::Level2(const QString &account, QWidget *parent)
+    : LevelBase(2, account, parent)
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("案件一: 失窃案");
+    qDebug() << "===== Level2 构造函数开始 =====";
+
+    // 设置关卡2的模型路径（训练好后修改这里）
+    m_modelPath = "E:/YOLO/ultralytics-8.3.163/runs/detect/my_yolo_models/model2/my_model3.onnx";  // TODO: 改成您的实际路径
+
+    // 案件一需要找到3个有用线索
+    m_maxUsefulClues = 3;
+    if (m_progressBar) {
+        m_progressBar->setRange(0, m_maxUsefulClues);
+        m_progressBar->setValue(0);
+    }
+
+    initStory();
+
+    qDebug() << "===== Level2 构造函数结束 =====";
+}
+
+void Level2::initStory()
+{
+    qDebug() << "===== Level2::initStory() 开始 =====";
+
+    if (m_storyText == nullptr) {
+        qDebug() << "错误：m_storyText 为空！";
+        return;
+    }
+
+    m_stories.clear();
+
+    addStoryText(
+        "【案件一: 失窃案】\n\n"
+        "清晨，博物馆馆长发现镇馆之宝——明代青花瓷瓶不见了！\n\n"
+        "监控显示昨晚有一个神秘人影出现在展厅。\n\n"
+        "你是负责此案的侦探，需要收集线索来找出真相。\n\n"
+        "点击「继续」开始调查。"
+        );
+
+    addStoryText(
+        "【案发现场】\n\n"
+        "你在展厅发现了以下可疑物品：\n\n"
+        "• 破碎的玻璃碎片\n"
+        "• 可疑的脚印\n"
+        "• 遗落的手套\n"
+        "• 监控录像截图\n\n"
+        "这些都可能是有用线索，请用摄像头甄别它们！\n\n"
+        "点击「继续」继续。"
+        );
+
+    addStoryText(
+        "【嫌疑人线索】\n\n"
+        "根据初步调查，有3名嫌疑人：\n\n"
+        "1. 博物馆保安（当晚值班）\n"
+        "2. 文物鉴定专家（最近频繁出入）\n"
+        "3. 神秘收藏家（曾多次询问青花瓷）\n\n"
+        "你需要收集足够线索来指认真凶！\n\n"
+        "点击「继续」开始收集线索。"
+        );
+
+    addStoryText(
+        "【任务开始！】\n\n"
+        "请用摄像头识别以下物品：\n\n"
+        "• 玻璃碎片\n"
+        "• 脚印\n"
+        "• 手套\n"
+        "• 监控截图\n\n"
+        "每识别成功一个，进度条就会增加。\n\n"
+        "当进度条满时，就可以通关了！\n\n"
+        "祝你成功！"
+        );
+
+    qDebug() << "添加了" << m_stories.size() << "段剧情";
+
+    if (!m_stories.isEmpty()) {
+        m_storyText->setPlainText(m_stories[0]);
+        m_storyText->update();
+    } else {
+        m_storyText->setPlainText("剧情加载失败，请重新进入关卡。");
+    }
+
+    qDebug() << "===== Level2::initStory() 结束 =====";
+}
+
+void Level2::onClueFound()
+{
+    addProgress(1);
+    qDebug() << "Level2::onClueFound() - 发现线索，进度+1";
+}
+
+void Level2::checkClue(const QString &clueName)
+{
+    QStringList usefulClues = {"鸟", "风筝", "香蕉"};
+    if (usefulClues.contains(clueName)) {
+        onClueFound();
+        qDebug() << "发现有用线索:" << clueName;
+    } else {
+        qDebug() << "线索" << clueName << "不是有用线索";
+    }
+}
+#include "Level3.h"
+#include <QDebug>
+
+Level3::Level3(const QString &account, QWidget *parent)
+    : LevelBase(3, account, parent)
+{
+    setWindowIcon(QIcon(":/res/eyes.png"));
+    setWindowTitle("案件二: 杀人案");
+    qDebug() << "===== Level3 构造函数开始 =====";
+
+    // 设置关卡3的模型路径（训练好后修改这里）
+    m_modelPath = "E:/YOLO/ultralytics-8.3.163/runs/detect/my_yolo_models/model3/my_model3.onnx";  // TODO: 改成您的实际路径
+
+    // 案件二需要找到3个有用线索
+    m_maxUsefulClues =3;
+    if (m_progressBar) {
+        m_progressBar->setRange(0, m_maxUsefulClues);
+        m_progressBar->setValue(0);
+    }
+
+    initStory();
+
+    qDebug() << "===== Level3 构造函数结束 =====";
+}
+
+void Level3::initStory()
+{
+    qDebug() << "===== Level3::initStory() 开始 =====";
+
+    if (m_storyText == nullptr) {
+        qDebug() << "错误：m_storyText 为空！";
+        return;
+    }
+
+    m_stories.clear();
+
+    addStoryText(
+        "【案件二: 密室杀人案】\n\n"
+        "富豪李明在自己的别墅书房中被发现身亡，房门从内反锁。\n\n"
+        "现场没有发现凶器，但留下了多个可疑线索。\n\n"
+        "点击「继续」开始调查。"
+        );
+
+    addStoryText(
+        "【案发现场】\n\n"
+        "你在密室中发现了以下物品：\n\n"
+        "• 带血的刀具\n"
+        "• 神秘的信封\n"
+        "• 破碎的眼镜\n"
+        "• 窗台上的脚印\n"
+        "• 烧毁的纸片\n\n"
+        "这些都可能是有用线索，请用摄像头甄别它们！\n\n"
+        "点击「继续」继续。"
+        );
+
+    addStoryText(
+        "【嫌疑人名单】\n\n"
+        "经过调查，有以下嫌疑人：\n\n"
+        "1. 李明的妻子（有财务纠纷）\n"
+        "2. 李明的生意伙伴（有商业竞争）\n"
+        "3. 李明的司机（目击者提供线索）\n"
+        "4. 神秘黑衣人（邻居看到）\n\n"
+        "你需要收集足够线索来锁定真凶！\n\n"
+        "点击「继续」继续。"
+        );
+
+    addStoryText(
+        "【任务开始！】\n\n"
+        "请用摄像头识别以下物品：\n\n"
+        "• 带血的刀具\n"
+        "• 神秘的信封\n"
+        "• 破碎的眼镜\n"
+        "• 窗台上的脚印\n"
+        "• 烧毁的纸片\n\n"
+        "每识别成功一个，进度条就会增加。\n\n"
+        "当进度条满时，就可以通关了！\n\n"
+        "祝你成功！"
+        );
+
+    qDebug() << "添加了" << m_stories.size() << "段剧情";
+
+    if (!m_stories.isEmpty()) {
+        m_storyText->setPlainText(m_stories[0]);
+        m_storyText->update();
+    } else {
+        m_storyText->setPlainText("剧情加载失败，请重新进入关卡。");
+    }
+
+    qDebug() << "===== Level3::initStory() 结束 =====";
+}
+
+void Level3::onClueFound()
+{
+    addProgress(1);
+    qDebug() << "Level3::onClueFound() - 发现线索，进度+1";
+}
+
+void Level3::checkClue(const QString &clueName)
+{
+
+    QStringList usefulClues = {"刀","钟","花瓶"};
+    if (usefulClues.contains(clueName)) {
+        onClueFound();
+        qDebug() << "发现有用线索:" << clueName;
+    } else {
+        qDebug() << "线索" << clueName << "不是有用线索";
+    }
+}
